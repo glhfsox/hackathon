@@ -7,4 +7,7 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["postgres: requires a dedicated PostgreSQL test connection"]
+markers = [
+    "postgres: requires a dedicated PostgreSQL test connection",
+    "middleware: opt-in real BGE, indexed PostgreSQL, and backend checkout verification",
+]
