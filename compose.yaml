@@ -1,0 +1,73 @@
+# The AI Control Layer, its dashboard and the test application, for judges and local demos.
+# Ollama runs on the host (see README.md). Quick start:
+#   docker compose run --rm init          # once: writes .env with random API keys
+#   docker compose up -d --build          # backend on :8000, dashboard on :5173
+#   docker compose run --rm test-app --scenario all
+name: ai-control-layer
+
+services:
+  # Owns the network namespace the backend lives in. policy.yaml points at Ollama on
+  # localhost:11434; this relay forwards that port to Ollama on the host, so the same policy file
+  # works in Docker and outside it.
+  net:
+    image: alpine/socat:1.8.0.3
+    command: TCP-LISTEN:11434,fork,reuseaddr TCP:host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux; Docker Desktop provides it already
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    network_mode: service:net
+    depends_on: [net]
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Mounted so hot reload, dashboard saves and audit logs use the files in this checkout.
+      - ./backend/policy.yaml:/app/backend/policy.yaml
+      - ./backend/signatures.yaml:/app/backend/signatures.yaml
+      - ./backend/logs:/app/backend/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Baked into the bundle at build time: rebuild after changing the key in .env.
+        VITE_PLAYGROUND_API_KEY: ${PLAYGROUND_API_KEY:-}
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on: [backend]
+
+  test-app:
+    profiles: [cli]
+    build:
+      context: .
+      dockerfile: test_app/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TEST_APP_PROXY_URL: http://net:8000/v1
+    volumes:
+      - ./test_app/runs:/app/test_app/runs
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  init:
+    profiles: [setup]
+    image: python:3.12-slim
+    working_dir: /work
+    volumes:
+      - .:/work
+    command: ["python", "scripts/init_env.py"]
