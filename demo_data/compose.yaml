@@ -2,7 +2,7 @@ name: treasury-demo
 
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
     environment:
       POSTGRES_USER: treasury_demo
       POSTGRES_DB: treasury_demo
