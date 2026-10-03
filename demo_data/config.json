@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "seed": 20261003,
+  "clients": 12,
+  "transactions": 1000,
+  "reference_date": "2026-10-03"
+}

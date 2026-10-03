@@ -14,8 +14,8 @@ Definitions the numbers rely on:
   The same usage on a check row and on the turn_summary row therefore never counts twice.
 - Percentiles use the nearest-rank method: the value at rank ceil(p/100 * n) of the sorted
   values. No interpolation, so p50 of two values is the lower one. Empty input gives 0.0.
-- `since` narrows every figure except `budget_by_caller` and `economics.budget_utilization`,
-  which always cover the UTC day of `now` because they are compared against per-day limits.
+- `since` narrows every figure except `budget_by_caller`, which always covers the UTC day of
+  `now`: it is today's usage per user (there are no limits, so they are reported as 0).
 
 `agents` and `economics` come from `turn_summary` rows only (one per checkpoint, written by the
 pipeline). A turn is one request, i.e. one agent step: its turn_summary rows grouped by
