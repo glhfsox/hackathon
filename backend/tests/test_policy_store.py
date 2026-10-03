@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import errno
 import logging
 import os
 from collections.abc import Callable
@@ -352,6 +353,53 @@ async def test_replace_writes_file_and_swaps(
     assert await store.poll_once() is False
     assert len(audit.records) == count
     assert list(policy_path.parent.iterdir()) == [policy_path]  # no temp file left behind
+
+
+async def test_save_writes_in_place_when_the_file_cannot_be_replaced(
+    store: PolicyStore,
+    policy_path: Path,
+    audit: MemoryAuditSink,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A policy file mounted into a container on its own cannot be renamed over (EBUSY), which
+    made every save from the dashboard fail with a 500."""
+
+    def busy(src: Any, dst: Any) -> None:
+        raise OSError(errno.EBUSY, "Device or resource busy")
+
+    monkeypatch.setattr(os, "replace", busy)
+    # The file is longer than the new text, so a missing truncate would leave old bytes behind.
+    policy_path.write_text(policy_path.read_text() + "# padding\n" * 200)
+    assert policy_path.stat().st_size > len(VALID_STRICT.encode("utf-8"))
+    inode = policy_path.stat().st_ino
+
+    loaded = await store.save(VALID_STRICT)
+
+    assert policy_path.read_bytes() == VALID_STRICT.encode("utf-8")
+    assert policy_path.stat().st_ino == inode  # the same file, written through
+    assert store.current() is loaded
+    assert loaded.policy.jev_threshold == 0.4
+    assert (_last(audit).check, _last(audit).policy_version) == ("policy_loaded", loaded.version)
+    assert await store.poll_once() is False  # our own write is not reloaded and re-audited
+    assert list(policy_path.parent.iterdir()) == [policy_path]  # no temp file left behind
+
+
+async def test_save_still_raises_other_write_errors(
+    store: PolicyStore, policy_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the mount case falls back: a full disk or a permission error is not swallowed."""
+
+    def denied(src: Any, dst: Any) -> None:
+        raise OSError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", denied)
+    before = policy_path.read_bytes()
+
+    with pytest.raises(OSError, match="Permission denied"):
+        await store.save(VALID_STRICT)
+
+    assert policy_path.read_bytes() == before
+    assert list(policy_path.parent.iterdir()) == [policy_path]
 
 
 @pytest.mark.parametrize("text", [c[1] for c in INVALID_EDITS], ids=[c[0] for c in INVALID_EDITS])
