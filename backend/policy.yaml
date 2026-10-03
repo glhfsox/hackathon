@@ -95,6 +95,24 @@ callers:
     allowed_models: [gemma4]
     allowed_tools: [query_customers, run_shell]
     budgets: {requests_per_minute: 60, tokens_per_day: 200000, cost_per_day: 1.0}
+  analyst:                    # test_app Agent A: read-only, never writes or pays
+    api_key_env: ANALYST_API_KEY
+    role: analyst
+    allowed_models: [gemma4]
+    allowed_tools: [search_documents, query_transactions]
+    budgets: {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
+  operator_clerk:             # test_app Agent B for a clerk user: no payment release, no SQL
+    api_key_env: OPERATOR_CLERK_API_KEY
+    role: clerk
+    allowed_models: [gemma4]
+    allowed_tools: [hold_payment, send_email, export_report]
+    budgets: {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
+  operator_treasurer:         # test_app Agent B for a treasurer user: every Operator tool
+    api_key_env: OPERATOR_TREASURER_API_KEY
+    role: treasurer
+    allowed_models: [gemma4]
+    allowed_tools: [send_email, release_payment, hold_payment, export_report, run_sql]
+    budgets: {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
 
 # CHECKS: one section per check. Inside a section, the checkpoint keys (input, tool_call,
 # tool_result, output) are MODES; every other key is a PARAMETER handed to that check. A check
