@@ -2,6 +2,8 @@
 
 **Branch**: `feat/treasury-rag-data` | **Date**: 2026-10-03 | **Spec**: [spec.md](spec.md)
 
+**Superseded storage design**: Source generation remains in use; the embedded snapshot and Ollama embedding proposal were replaced by [the PostgreSQL migration](../003-treasury-postgres/plan.md) and the current [RAG design](../../docs/rag-demo.md). This plan records the original implementation.
+
 ## Summary
 
 Build an isolated Python CLI under `demo_data/` that produces linked financial records, documents, evaluator annotations, retrieval questions, and a SQLite snapshot. Retrieval design lives in [docs/rag-demo.md](../../docs/rag-demo.md). Data shapes live in [contracts/demo-data.md](../../contracts/demo-data.md).

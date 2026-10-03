@@ -1,0 +1,21 @@
+name: treasury-demo
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: treasury_demo
+      POSTGRES_DB: treasury_demo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in demo_data/.env}
+    ports:
+      - "127.0.0.1:${DEMO_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - treasury-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U treasury_demo -d treasury_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  treasury-data:

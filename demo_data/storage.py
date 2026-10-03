@@ -1,10 +1,8 @@
-"""Portable corpus exports and an inspectable relational snapshot."""
+"""Portable source exports and offline corpus validation."""
 
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
-from urllib.parse import quote
 
 from faker import VERSION as FAKER_VERSION
 
@@ -31,40 +29,6 @@ SOURCE_MODELS = {
     "transactions": Transaction,
     "documents": Document,
 }
-DDL = """
-PRAGMA foreign_keys = ON;
-CREATE TABLE clients (
-    client_id TEXT PRIMARY KEY, name TEXT NOT NULL, country TEXT NOT NULL, sector TEXT NOT NULL
-);
-CREATE TABLE contacts (
-    contact_id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients,
-    name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL,
-    identifier_kind TEXT NOT NULL, identifier TEXT NOT NULL
-);
-CREATE TABLE accounts (
-    account_id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients,
-    iban TEXT NOT NULL, currency TEXT NOT NULL,
-    opening_balance_minor INTEGER NOT NULL CHECK (opening_balance_minor >= 0)
-);
-CREATE TABLE transactions (
-    transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts,
-    client_id TEXT NOT NULL REFERENCES clients, counterparty TEXT NOT NULL,
-    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0), currency TEXT NOT NULL,
-    direction TEXT NOT NULL, status TEXT NOT NULL, booked_at TEXT NOT NULL, reference TEXT NOT NULL
-);
-CREATE TABLE documents (
-    document_id TEXT PRIMARY KEY, client_id TEXT REFERENCES clients, title TEXT NOT NULL,
-    document_type TEXT NOT NULL, classification TEXT NOT NULL, source TEXT NOT NULL,
-    created_at TEXT NOT NULL, transaction_ids TEXT NOT NULL, text TEXT NOT NULL
-);
-CREATE TABLE document_transactions (
-    document_id TEXT NOT NULL REFERENCES documents,
-    transaction_id TEXT NOT NULL REFERENCES transactions,
-    PRIMARY KEY (document_id, transaction_id)
-);
-CREATE INDEX transactions_client ON transactions(client_id);
-CREATE INDEX documents_client ON documents(client_id);
-"""
 
 
 def json_line(record: Model) -> str:
@@ -73,29 +37,6 @@ def json_line(record: Model) -> str:
 
 def write_jsonl(path: Path, records: list[Model]) -> None:
     path.write_text("".join(json_line(record) for record in records), encoding="utf-8")
-
-
-def sql_values(record: Model) -> tuple[object, ...]:
-    return tuple(
-        json.dumps(value, ensure_ascii=False) if isinstance(value, list) else value
-        for value in record.model_dump(mode="json").values()
-    )
-
-
-def write_database(path: Path, corpus: Corpus) -> None:
-    with sqlite3.connect(path) as db:
-        db.executescript(DDL)
-        for table, model in SOURCE_MODELS.items():
-            columns = ",".join(model.model_fields)
-            placeholders = ",".join("?" for _ in model.model_fields)
-            db.executemany(
-                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
-                [sql_values(record) for record in getattr(corpus, table)],
-            )
-        db.executemany(
-            "INSERT INTO document_transactions VALUES (?, ?)",
-            [(doc.document_id, tx_id) for doc in corpus.documents for tx_id in doc.transaction_ids],
-        )
 
 
 def digest(path: Path) -> str:
@@ -122,7 +63,6 @@ def export(corpus: Corpus, config: GenerationConfig, output: Path) -> Manifest:
     write_jsonl(output / "documents.jsonl", indexes)
     write_jsonl(output / "evaluation" / "ground_truth.jsonl", corpus.ground_truth)
     write_jsonl(output / "evaluation" / "questions.jsonl", corpus.questions)
-    write_database(output / "corpus.sqlite3", corpus)
     files = {
         path.relative_to(output).as_posix(): digest(path)
         for path in sorted(output.rglob("*"))
@@ -164,36 +104,6 @@ def read_jsonl(path: Path, model: type[Model]) -> list[Model]:
         except ValueError as exc:
             raise ValueError(f"invalid {path.name}:{number}: {exc}") from exc
     return result
-
-
-def validate_database(path: Path, corpus: Corpus) -> None:
-    with sqlite3.connect(f"file:{quote(str(path.resolve()))}?mode=ro", uri=True) as db:
-        db.execute("PRAGMA foreign_keys = ON")
-        if db.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-            raise ValueError("SQLite integrity check failed")
-        if db.execute("PRAGMA foreign_key_check").fetchall():
-            raise ValueError("SQLite foreign keys failed")
-        tables = {
-            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-        if tables != {*SOURCE_MODELS, "document_transactions"}:
-            raise ValueError("unexpected SQLite tables")
-        for table, model in SOURCE_MODELS.items():
-            columns = ",".join(model.model_fields)
-            key = next(iter(model.model_fields))
-            actual = db.execute(f"SELECT {columns} FROM {table} ORDER BY {key}").fetchall()
-            expected = sorted(sql_values(record) for record in getattr(corpus, table))
-            if actual != expected:
-                raise ValueError(f"SQLite/export mismatch: {table}")
-        links = db.execute(
-            "SELECT document_id, transaction_id FROM document_transactions "
-            "ORDER BY document_id, transaction_id"
-        ).fetchall()
-        expected_links = sorted(
-            (doc.document_id, tx_id) for doc in corpus.documents for tx_id in doc.transaction_ids
-        )
-        if links != expected_links:
-            raise ValueError("SQLite document/payment links mismatch")
 
 
 def validate_directory(root: Path) -> tuple[Corpus, Manifest]:
@@ -240,5 +150,4 @@ def validate_directory(root: Path) -> tuple[Corpus, Manifest]:
     }
     if counts(corpus) != expected_counts:
         raise ValueError("corpus/config counts mismatch")
-    validate_database(root / "corpus.sqlite3", corpus)
     return corpus, manifest

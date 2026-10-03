@@ -1,6 +1,4 @@
-import hashlib
 import json
-import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -123,12 +121,7 @@ def test_export_roundtrip_and_no_label_leakage(
     source_metadata = (root / "documents.jsonl").read_text()
     for forbidden in ("attack_family", "attack_spans", "pair_id", "variant", "answer_facts"):
         assert forbidden not in source_metadata
-    with sqlite3.connect(root / "corpus.sqlite3") as db:
-        assert db.execute("SELECT COUNT(*) FROM transactions").fetchone() == (32,)
-        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert db.execute(
-            "SELECT COUNT(*) FROM documents WHERE text LIKE '%Processing note%'"
-        ).fetchone() == (4,)
+    assert not list(root.glob("*.sqlite*"))
 
 
 def test_export_bytes_are_repeatable(
@@ -195,24 +188,6 @@ def test_modified_source_is_detected(
     path = root / "documents" / f"{corpus.documents[0].document_id}.md"
     path.write_text(path.read_text() + "modified")
     with pytest.raises(ValueError, match="checksum mismatch"):
-        validate_directory(root)
-
-
-def test_snapshot_disagreement_is_detected(
-    tmp_path: Path,
-    config: GenerationConfig,
-    corpus: Corpus,
-) -> None:
-    root = tmp_path / "corpus"
-    export(corpus, config, root)
-    path = root / "corpus.sqlite3"
-    with sqlite3.connect(path) as db:
-        db.execute("UPDATE clients SET name = 'changed'")
-    manifest_path = root / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"]["corpus.sqlite3"] = hashlib.sha256(path.read_bytes()).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="SQLite/export mismatch"):
         validate_directory(root)
 
 
