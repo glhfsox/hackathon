@@ -1,0 +1,93 @@
+# Budget check. Limits come from policy.yaml callers.*.budgets
+# (demo: 60 req/min, 200000 tokens/day, cost 1.0/day; support: 30 req/min).
+# `usage` preloads the caller's ledger; a limit that is reached blocks the next request.
+
+- name: budget allows a caller with no usage
+  checkpoint: input
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {requests_last_minute: 0, tokens_today: 0, cost_today: 0.0}
+  expect:
+    action: allow
+    check: budget
+
+- name: budget allows a caller one under every limit
+  checkpoint: input
+  messages: [{role: user, content: "Summarise our refund policy in one line."}]
+  usage: {requests_last_minute: 59, tokens_today: 199999, cost_today: 0.99}
+  expect:
+    action: allow
+    check: budget
+
+- name: budget blocks at the requests per minute limit
+  checkpoint: input
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {requests_last_minute: 60}
+  expect:
+    action: block
+    check: budget
+    reason_contains: "requests_per_minute exhausted: 60/60"
+
+- name: budget blocks at the tokens per day limit
+  checkpoint: input
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {tokens_today: 200000}
+  expect:
+    action: block
+    check: budget
+    reason_contains: "tokens_per_day exhausted: 200000/200000"
+
+- name: budget blocks at the cost per day limit
+  checkpoint: input
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {cost_today: 1.0}
+  expect:
+    action: block
+    check: budget
+    reason_contains: "cost_per_day exhausted"
+
+- name: budget uses the limits of the calling caller
+  checkpoint: input
+  caller: support
+  messages: [{role: user, content: "Look up the status of order 42."}]
+  usage: {requests_last_minute: 30}
+  expect:
+    action: block
+    check: budget
+    reason_contains: "requests_per_minute exhausted: 30/30"
+
+- name: budget in monitor mode flags instead of blocking
+  checkpoint: input
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {requests_last_minute: 60}
+  policy_patch: {checks: {budget: {input: monitor}}}
+  expect:
+    action: flag
+    check: budget
+    reason_contains: "requests_per_minute exhausted"
+
+# Red team: a trailing tool message makes the checkpoint tool_result, and that request is
+# forwarded upstream too, so it must not skip the budget.
+- name: budget blocks an exhausted caller at tool_result
+  checkpoint: tool_result
+  caller: support
+  messages:
+    - {role: user, content: "Look up customer 42."}
+    - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+    - {role: tool, content: "ok", tool_call_id: "1"}
+  usage: {requests_last_minute: 30, tokens_today: 50000, cost_today: 0.5}
+  expect:
+    action: block
+    check: budget
+    reason_contains: "requests_per_minute exhausted: 30/30"
+
+- name: budget allows a caller within limits at tool_result
+  checkpoint: tool_result
+  caller: support
+  messages:
+    - {role: user, content: "Look up customer 42."}
+    - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+    - {role: tool, content: "ok", tool_call_id: "1"}
+  usage: {requests_last_minute: 29, tokens_today: 49999, cost_today: 0.49}
+  expect:
+    action: allow
+    check: budget

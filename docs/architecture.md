@@ -44,7 +44,7 @@ The agent re-sends the full conversation on every step, so the layer is **statel
    - The reply contains `tool_calls` → checkpoint `tool_call`.
    - Otherwise → checkpoint `output`. The pipeline runs again on the reply.
 8. **Respond.** The response is OpenAI-format with an extra `control` field (the decision trace). Normal clients ignore it, and the playground displays it.
-9. **Audit.** One `AuditRecord` is written per check result, grouped by `request_id`. Token usage and cost come from upstream `usage` and the model price in the policy.
+9. **Audit.** One `AuditRecord` is written per check result, plus one `turn_summary` row per checkpoint, grouped by `request_id`. Token usage and cost come from upstream `usage` and the model price in the policy.
 
 `stream: true` is accepted and answered non-streamed.
 
@@ -57,7 +57,7 @@ The agent re-sends the full conversation on every step, so the layer is **statel
 | Check verdict           | `monitor` | `redact` | `block` |
 | ----------------------- | --------- | -------- | ------- |
 | allow                   | allow     | allow    | allow   |
-| redact (has redactions) | flag      | redact   | redact  |
+| redact (has redactions) | flag      | redact   | block   |
 | block                   | flag      | block    | block   |
 | error / timeout         | flag      | block    | block   |
 
@@ -65,9 +65,9 @@ The agent re-sends the full conversation on every step, so the layer is **statel
 
 | #   | Check id         | Checkpoints                     | What it does                                                                          |
 | --- | ---------------- | ------------------------------- | ------------------------------------------------------------------------------------- |
-| 1   | `permissions`    | input, tool_call                | Caller may use this model and these tools                                             |
-| 2   | `budget`         | input                           | Requests per minute, tokens per day, cost per day for the caller                      |
-| 3   | `loop_detection` | input, tool_result              | Too many tool calls in the conversation, or the same call with the same args repeated |
+| 1   | `permissions`    | input, tool_call, tool_result   | Caller may use this model and these tools                                             |
+| 2   | `budget`         | input, tool_result              | Requests per minute, tokens per day, cost per day for the caller                      |
+| 3   | `loop_detection` | input, tool_result              | Too many tool calls in one agent turn, or the same call with the same args repeated |
 | 4   | `signatures`     | input, tool_call, tool_result   | Regex patterns from the external attack-signature feed                                |
 | 5   | `tool_args`      | tool_call                       | Shell danger, destructive SQL, path traversal, unsafe deserialization                 |
 | 6   | `pii_secrets`    | tool_result, output (and input) | Detects and redacts email, phone, PESEL, SSN, IBAN, card numbers, API keys            |

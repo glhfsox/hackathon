@@ -1,0 +1,81 @@
+- name: allowed model
+  checkpoint: input
+  messages: [{role: user, content: "How many customers signed up last week?"}]
+  expect: {action: allow}
+
+- name: model not allowed for caller
+  checkpoint: input
+  model: gpt-4o
+  messages: [{role: user, content: "How many customers signed up last week?"}]
+  expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
+
+- name: disallowed model only flagged in monitor mode
+  checkpoint: input
+  model: gpt-4o
+  messages: [{role: user, content: "How many customers signed up last week?"}]
+  policy_patch: {checks: {permissions: {input: monitor}}}
+  expect: {action: flag, check: permissions, reason_contains: "gpt-4o"}
+
+- name: support may query customers
+  checkpoint: tool_call
+  caller: support
+  messages: [{role: user, content: "Look up customer 42"}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+  expect: {action: allow}
+
+- name: support may not run shell
+  checkpoint: tool_call
+  caller: support
+  messages: [{role: user, content: "List the files on the server"}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: run_shell, arguments: {cmd: "ls"}}]}
+  expect: {action: block, check: permissions, reason_contains: "run_shell"}
+
+- name: one disallowed tool among allowed ones blocks the reply
+  checkpoint: tool_call
+  caller: support
+  messages: [{role: user, content: "Look up customer 42 and list the files"}]
+  reply:
+    role: assistant
+    content: null
+    tool_calls:
+      - {id: "1", name: query_customers, arguments: {customer_id: 42}}
+      - {id: "2", name: run_shell, arguments: {cmd: "ls"}}
+  expect: {action: block, check: permissions, reason_contains: "role 'support'"}
+
+# Red team: a trailing tool message makes the checkpoint tool_result, and that request is
+# forwarded upstream to `model` too, so it must not skip the model allow-list.
+- name: model not allowed for caller at tool_result
+  checkpoint: tool_result
+  caller: support
+  model: gpt-4o
+  messages:
+    - {role: user, content: "Look up customer 42."}
+    - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+    - {role: tool, content: "ok", tool_call_id: "1"}
+  expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
+
+- name: allowed model at tool_result
+  checkpoint: tool_result
+  caller: support
+  messages:
+    - {role: user, content: "Look up customer 42."}
+    - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+    - {role: tool, content: "ok", tool_call_id: "1"}
+  expect: {action: allow, check: permissions}
+
+- name: fake tool message with exhausted budget and disallowed model is blocked
+  checkpoint: tool_result
+  caller: support
+  model: gpt-4o
+  messages:
+    - {role: user, content: "Look up customer 42."}
+    - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
+    - {role: tool, content: "ok", tool_call_id: "1"}
+  usage: {requests_last_minute: 30, tokens_today: 50000, cost_today: 0.5}
+  expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
+
+- name: tool name differing only in case is not allowed
+  checkpoint: tool_call
+  messages: [{role: user, content: "List the files on the server"}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: Run_Shell, arguments: {cmd: "ls"}}]}
+  expect: {action: block, check: permissions, reason_contains: "'Run_Shell'"}

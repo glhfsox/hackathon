@@ -1,0 +1,127 @@
+# Attack-signature feed for the AI Control Layer (example of an externally managed feed).
+#
+# The policy names this feed in `signatures.source` (a file path relative to the policy file, or an
+# http(s) URL) and re-reads it every `signatures.refresh_s` seconds, so an edit here reaches the
+# next request without a restart. A broken edit is rejected and the last good set stays active.
+#
+# FORMAT
+#   version: str                      quote it, an unquoted date is not a string
+#   signatures:
+#     - id: str                       unique, cited in every block reason
+#       category: prompt_injection | code_execution | deserialization | supply_chain
+#                 | exfiltration | other
+#       pattern: str                  Python `re`, compiled with IGNORECASE unless case_sensitive
+#       description: str              shown in the block reason (the matched text never is).
+#                                     It must match no pattern: agents re-send the refusal
+#                                     that quotes it, and the whole conversation is scanned.
+#       references: [str]             optional: the historical exploit or advisory
+#       case_sensitive: bool          optional, default false
+#
+# Unknown keys are rejected, so a typo (e.g. `case_sensitve`) is an error, not a silent change.
+# There is no `severity` or `applies_to`: every signature applies at every checkpoint the
+# signatures check runs on (input, tool_call, tool_result), and any match is a block verdict.
+# Whether that blocks or only flags is the policy mode's decision. The policy can limit the check
+# to some categories with `checks.signatures.categories`.
+#
+# At tool_call the text matched is the JSON of the tool calls, so quotes appear as \" and
+# newlines as \n. Patterns allow an optional backslash before quotes for that reason.
+# Patterns must not match ordinary developer text; tests/test_signatures.py enforces both sides.
+
+version: "2026-10-03.2"
+
+signatures:
+  # --- Prompt injection and jailbreaks (OWASP LLM01) ---
+  - id: PI-001
+    category: prompt_injection
+    pattern: '\b(ignore|disregard)\s+(all\s+|any\s+)?(of\s+)?(the\s+|your\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|prompts?|rules|directions|guidelines)\b'
+    description: Instruction override (tells the model to drop its earlier instructions)
+    references: ["https://genai.owasp.org/llmrisk/llm01-prompt-injection/"]
+  - id: PI-002
+    category: prompt_injection
+    pattern: '\b(you\s+are\s+(now\s+)?|act\s+as\s+|pretend\s+(to\s+be|you\s+are)\s+)(DAN\b|an?\s+(unrestricted|unfiltered|uncensored|jailbroken)\b)|\bdo\s+anything\s+now\b'
+    description: Persona-override jailbreak (DAN-style prompts and variants)
+  - id: PI-003
+    category: prompt_injection
+    pattern: '\bif\s+you\s+are\s+an?\s+(ai|llm|(large\s+)?language\s+model)(\s+(assistant|agent|model))?\s*(,|reading|processing|parsing|summari[sz]ing)|\[system\]\(#\w*\)|\b(note|message)\s+to\s+(the\s+|any\s+|all\s+)?(ai|llm)s?(\s+(assistants?|agents?|models?))?\s*:'
+    description: Instructions addressed to an AI reader inside fetched content (indirect injection)
+    references: ["https://arxiv.org/abs/2302.12173"]
+  - id: PI-004
+    category: prompt_injection
+    pattern: '\b(reveal|print|show|repeat|output|display|dump|leak|tell)\s+(me\s+)?(all\s+)?(of\s+)?your\s+((entire|full|original|hidden|initial|secret)\s+)?system\s+prompt\b|\b(reveal|print|show|repeat|output|display|dump|leak|tell)\s+(me\s+)?(all\s+)?(of\s+)?your\s+(original|hidden|initial|secret|system)\s+(instructions|rules)\b|\brepeat\s+(all\s+)?(of\s+)?the\s+(words|text)\s+above\b'
+    description: System prompt extraction
+  - id: PI-005
+    category: prompt_injection
+    case_sensitive: true
+    pattern: '<\|im_start\|>|<\|im_end\|>|<\|(system|user|assistant)\|>|<\|start_header_id\|>|\[/?INST\]|<<SYS>>'
+    description: Chat-template role tokens that spoof a system or assistant turn
+  - id: PI-006
+    category: prompt_injection
+    pattern: '[\U000E0000-\U000E007F]'
+    description: Invisible Unicode tag characters used to hide instructions (ASCII smuggling)
+    references: ["https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/"]
+
+  # --- Malicious code execution ---
+  - id: CE-001
+    category: code_execution
+    pattern: '\b(curl|wget)\b[^|;&\n]{0,300}\|\s*(sudo\s+(-\S+\s+)*)?(/(usr/)?bin/)?(ba|z|da|k)?sh\b|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b|\b(ba|z)?sh\s+-c\s+\\?["'']\$\(\s*(curl|wget)\b'
+    description: Download and pipe to a shell
+  - id: CE-002
+    category: code_execution
+    pattern: '\b(ba)?sh\s+-i\b[^|;\n]{0,100}/dev/(tcp|udp)/|/dev/(tcp|udp)/[^\s/]+/\d+\s+0>&1|\b(nc|ncat|netcat)\b[^|;&\n]{0,200}\s-[a-z]{0,10}[ec]\s+\S{0,40}(ba|z|da)?sh\b|\bmkfifo\b[^\n]{0,300}\|\s*(nc|ncat|netcat)\b|\bpty\.spawn\s*\(\s*\\?["''](/(usr/)?bin/)?(ba|z)?sh\b|\bsocket\.socket\b[\s\S]{0,300}?\.connect\s*\([\s\S]{0,300}?\b(os\.dup2|subprocess\.(call|Popen|run))\s*\('
+    description: Reverse shell (bash /dev/tcp, netcat -e, mkfifo, Python socket + dup2, pty.spawn)
+  - id: CE-003
+    category: code_execution
+    pattern: '\b(eval|exec)\s*\(\s*(base64\.\w*decode|codecs\.decode|bytes\.fromhex|zlib\.decompress|marshal\.loads|atob|Buffer\.from)\s*\('
+    description: Dynamic execution of an encoded payload
+  - id: CE-004
+    category: code_execution
+    pattern: '\b__import__\s*\(\s*\\?["''](os|subprocess|pty|socket|builtins)\\?["'']\s*\)|__class__\s*\.\s*__(base|bases|mro)__[\s\S]{0,80}?__subclasses__\s*\(|__builtins__\s*\[\s*\\?["'']__import__'
+    description: Python sandbox escape and template-injection gadgets
+  - id: CE-005
+    category: code_execution
+    pattern: '\$\{\s*jndi\s*:|\$\{\s*\$\{\s*(lower|upper|env|::-)[^}]{0,100}\}'
+    description: Log4Shell JNDI lookup, plain or obfuscated
+    references: ["CVE-2021-44228"]
+
+  # --- Unsafe deserialization ---
+  - id: DS-001
+    category: deserialization
+    pattern: '\b__reduce(_ex)?__\s*\('
+    description: Pickle reduce hook, the primitive behind malicious .pkl and .bin model files
+  - id: DS-002
+    category: deserialization
+    pattern: '\btorch\.load\s*\((?!(?:[^()]|\([^()]{0,200}\)){0,300}\bweights_only\s*=\s*True\b)'
+    description: torch.load without weights_only=True unpickles arbitrary code
+  - id: DS-003
+    category: deserialization
+    pattern: '!!python/(object(/apply|/new)?|name|module)\s*:'
+    description: PyYAML python object tag that runs code on an unsafe load
+    references: ["CVE-2017-18342"]
+
+  # --- Supply chain against model hubs and package indexes ---
+  - id: SC-001
+    category: supply_chain
+    pattern: '\btrust_remote_code\\?["'']?\s*[=:]\s*True\b|--trust-remote-code\b'
+    description: Model load that runs repository code (trust_remote_code)
+  - id: SC-002
+    category: supply_chain
+    pattern: '\bpip3?\s+install\b[^\\\n;&|]{0,300}?(\s--(extra-)?index-url\b|\s-i\s|\s--trusted-host\b|\sgit\+\w+://|\shttps?://)'
+    description: Package install from a non-default index or a raw URL (dependency confusion)
+
+  # --- Data exfiltration and credential access ---
+  - id: EX-001
+    category: exfiltration
+    pattern: '\.ssh/(id_(rsa|dsa|ecdsa|ed25519)\b(?!\.pub)|authorized_keys\b)|/etc/shadow\b|\.aws/credentials\b|\.docker/config\.json\b|\.kube/config\b|\.git-credentials\b|\.netrc\b|\.config/gcloud/'
+    description: Credential or key file path
+  - id: EX-002
+    category: exfiltration
+    pattern: '\.\./(etc/(passwd|shadow)|proc/self/(environ|cmdline|mem))\b|%2e%2e(/|%2f|%5c)|\.\.(%2f|%5c)'
+    description: Path traversal to system files, plain or URL-encoded
+  - id: EX-003
+    category: exfiltration
+    pattern: '\b(webhook\.site|requestbin\.(com|net)|pipedream\.net|requestcatcher\.com|burpcollaborator\.net|oastify\.com|interact\.sh|[a-z0-9-]{1,63}\.oast\.(pro|live|site|online|fun|me)|[a-z0-9-]{1,63}\.ngrok(-free)?\.(io|app|dev))\b'
+    description: Known exfiltration or out-of-band callback endpoint
+  - id: EX-004
+    category: exfiltration
+    pattern: '!\[[^\]]{0,200}\]\(\s*https?://[^\s)?]{1,300}\?[^\s)]{0,1000}=[^\s)&]{40,}'
+    description: Markdown image with a long query value (image-beacon exfiltration)

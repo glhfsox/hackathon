@@ -87,7 +87,7 @@ The interface of `core/jev.py`. It is the same for Jev and the fallback.
 
 ## AuditRecord
 
-One row per CheckResult, plus rows for system events. Append-only.
+One row per CheckResult, plus one `turn_summary` row per checkpoint, plus rows for system events. Append-only.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -97,12 +97,29 @@ One row per CheckResult, plus rows for system events. Append-only.
 | `caller_id` | str \| null | |
 | `model` | str \| null | |
 | `checkpoint` | Checkpoint \| null | |
-| `check` | str | Check id, or a system event: `auth_failed`, `bad_request`, `upstream_unavailable`, `policy_loaded`, `policy_rejected` |
-| `action` | Action | |
+| `check` | str | Check id, or a system event: `auth_failed`, `bad_request`, `upstream_unavailable`, `policy_loaded`, `policy_rejected`, `signature_feed_updated`, `signature_feed_failed`, `turn_summary` |
+| `action` | Action | On `turn_summary`: the Decision action |
 | `reason` | str | |
-| `score` | float | |
-| `latency_ms` | float | |
-| `decided_by` | DecidedBy | |
-| `tokens` | int | Upstream usage for this request. Recorded on the `output`/`tool_call` rows only |
+| `score` | float | On `turn_summary`: the highest check score |
+| `latency_ms` | float | On `turn_summary`: the summed check latency (the overhead) |
+| `decided_by` | DecidedBy | On `turn_summary`: the blocking check's, else `rules` |
+| `tokens` | int | Upstream usage for this request. Recorded once, on the `turn_summary` row at `tool_call`/`output` |
 | `cost` | float | `tokens / 1000 * model.price_per_1k_tokens` |
 | `policy_version` | str | `version` of the policy snapshot used |
+
+Additive (optional) fields, set on `turn_summary` rows only and null on every other row:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `conversation_id` | str \| null | Short hash of `caller_id` + the first user message. Groups the steps of one agent session; two sessions of one caller with the same first user message merge |
+| `step` | int \| null | Assistant messages already in the conversation, i.e. which agent step this is (0-based) |
+| `messages` | int \| null | Conversation length |
+| `tool_calls` | int \| null | Tool calls requested in this reply. Null at `input`/`tool_result` |
+| `tools` | str \| null | Comma-joined tool names of those calls, one per call |
+| `tool_calls_total` | int \| null | All tool calls in the conversation so far, this reply included |
+| `prompt_tokens`, `completion_tokens` | int \| null | Upstream usage split, at `tool_call`/`output` |
+| `upstream_latency_ms` | float \| null | Upstream call time, at `tool_call`/`output` |
+| `overhead_ms` | float \| null | Summed check latency at this checkpoint |
+| `blocked_by` | str \| null | Check id that blocked, as in Decision |
+
+**Usage** is the pipeline's input at `tool_call`/`output`, not a wire shape: `prompt_tokens: int`, `completion_tokens: int`, `upstream_latency_ms: float | null`.
