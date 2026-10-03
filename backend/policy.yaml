@@ -55,11 +55,23 @@ permissions:
   web.read:       [http_get]
   shell.exec:     [run_shell]
   tasks.delegate: [delegate]
+  # test_app (Analyst -> Operator): the Analyst only reads, the Operator acts per user role.
+  docs.read:         [search_documents]
+  transactions.read: [query_transactions]
+  payments.hold:     [hold_payment]
+  payments.release:  [release_payment]
+  email.send:        [send_email]
+  reports.export:    [export_report]
+  sql.run:           [run_sql]
 
 roles:
   support:      [customers.read]
   developer:    [customers.read, files.read, web.read, shell.exec]
   orchestrator: [tasks.delegate]
+  analyst:      [docs.read, transactions.read]
+  # A clerk handles routine follow-up; only a treasurer may move money or touch the database.
+  clerk:        [payments.hold, email.send, reports.export]
+  treasurer:    [payments.hold, payments.release, email.send, reports.export, sql.run]
 
 # CHECKS: one section per check; every key in a section is a PARAMETER handed to that check. A
 # check accepts only the parameters listed for it below. Only jev takes `timeout_s`: the rule
@@ -82,6 +94,9 @@ checks:
       developer:    {requests_per_minute: 60, tokens_per_day: 200000, cost_per_day: 1.0}
       orchestrator: {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
       support:      {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}
+      analyst:      {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
+      clerk:        {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
+      treasurer:    {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
 
   # Runaway agents, counted per agent turn (tool calls since the last user message): more than
   # max_tool_calls tool calls, or the same tool with identical arguments more than max_repeats times.

@@ -99,3 +99,25 @@
     action: block
     check: budget
     reason_contains: "no budget for roles 'guest'"
+
+# test_app roles (analyst: 30 req/min, 100000 tokens/day; clerk and treasurer: 20 req/min, 50000).
+- name: budget blocks the analyst at its requests per minute limit
+  checkpoint: input
+  roles: [analyst]
+  messages: [{role: user, content: "Why is TXN-000001 held?"}]
+  usage: {requests_last_minute: 30}
+  expect: {action: block, check: budget, reason_contains: "requests_per_minute exhausted: 30/30"}
+
+- name: budget blocks the clerk at its tokens per day limit
+  checkpoint: input
+  roles: [clerk]
+  messages: [{role: user, content: "Hold TXN-000001."}]
+  usage: {tokens_today: 50000}
+  expect: {action: block, check: budget, reason_contains: "tokens_per_day exhausted: 50000/50000"}
+
+- name: budget blocks the treasurer at its cost per day limit
+  checkpoint: input
+  roles: [treasurer]
+  messages: [{role: user, content: "Release TXN-000001."}]
+  usage: {cost_today: 0.25}
+  expect: {action: block, check: budget, reason_contains: "cost_per_day exhausted"}

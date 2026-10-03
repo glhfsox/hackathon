@@ -189,12 +189,12 @@ def _without(*check_ids: str) -> Callable[[dict[str, Any]], None]:
     [
         (
             _set(["checks"], {}),
-            "0 checks on, jev_threshold 0.6; 3 roles, 5 permissions; "
+            "0 checks on, jev_threshold 0.6; 6 roles, 12 permissions; "
             "off: permissions, budget, loop_detection, signatures, tool_args, pii_secrets, jev",
         ),
         (
             _without("signatures", "jev"),
-            "5 checks on, jev_threshold 0.6; 3 roles, 5 permissions; off: signatures, jev",
+            "5 checks on, jev_threshold 0.6; 6 roles, 12 permissions; off: signatures, jev",
         ),
     ],
     ids=["empty_checks", "two_off"],

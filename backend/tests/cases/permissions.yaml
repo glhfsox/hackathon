@@ -69,3 +69,25 @@
   messages: [{role: user, content: "List the files on the server"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: Run_Shell, arguments: {cmd: "ls"}}]}
   expect: {action: block, check: permissions, reason_contains: "'Run_Shell'"}
+
+# test_app roles: the Analyst only reads; a clerk may hold but not release a payment.
+- name: clerk may not release a payment
+  checkpoint: tool_call
+  roles: [clerk]
+  messages: [{role: user, content: "Release the held payment TXN-000001."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: release_payment, arguments: {transaction_id: "TXN-000001"}}]}
+  expect: {action: block, check: permissions, reason_contains: "release_payment"}
+
+- name: treasurer may release a payment
+  checkpoint: tool_call
+  roles: [treasurer]
+  messages: [{role: user, content: "Release the held payment TXN-000001."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: release_payment, arguments: {transaction_id: "TXN-000001"}}]}
+  expect: {action: allow, check: permissions}
+
+- name: analyst may not send email
+  checkpoint: tool_call
+  roles: [analyst]
+  messages: [{role: user, content: "Email the summary of TXN-000001 to the client."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: send_email, arguments: {to: "ops@example.test", subject: "TXN-000001", body: "held"}}]}
+  expect: {action: block, check: permissions, reason_contains: "send_email"}
