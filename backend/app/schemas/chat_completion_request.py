@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatCompletionRequest(BaseModel):
@@ -13,7 +13,7 @@ class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str
-    messages: list[dict[str, Any]]
+    messages: list[dict[str, Any]] = Field(min_length=1)
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None

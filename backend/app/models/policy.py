@@ -165,6 +165,8 @@ class SignatureFeedConfig(_Strict):
 class ModelConfig(_Strict):
     upstream_base_url: str
     price_per_1k_tokens: float = 0.0
+    # Seconds to wait for the upstream reply; a local model can take tens of seconds.
+    timeout_s: float = Field(default=120.0, gt=0)
 
 
 class Caller(_Strict):
@@ -231,7 +233,7 @@ class Policy(_Strict):
         errors: list[InitErrorDetails] = []
 
         def add(loc: tuple[str | int, ...], msg: str, value: Any) -> None:
-            err = PydanticCustomError("policy_reference", msg)  # type: ignore[arg-type]
+            err = PydanticCustomError("policy_reference", msg)
             errors.append(InitErrorDetails(type=err, loc=loc, input=value))
 
         if self.active_profile not in self.profiles:
@@ -269,11 +271,11 @@ class Policy(_Strict):
                     loc = ("checks", _PII, cp.value)
                 offending.setdefault(loc, []).append(name)
         for loc, names in offending.items():
-            cp = loc[-1]
+            at = loc[-1]
             add(
                 loc,
-                f"pii_secrets is off at {cp} while jev is on there (profile {', '.join(names)}): "
-                f"nothing would redact PII before it is sent to Jev. Turn pii_secrets on at {cp} "
+                f"pii_secrets is off at {at} while jev is on there (profile {', '.join(names)}): "
+                f"nothing would redact PII before it is sent to Jev. Turn pii_secrets on at {at} "
                 "(monitor is enough) or turn jev off there",
                 Mode.OFF.value,
             )

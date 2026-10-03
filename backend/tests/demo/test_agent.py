@@ -1,4 +1,4 @@
-"""The agent loop and the two agents, against the demo gateway with a scripted upstream."""
+"""The agent loop and the two agents, against the control layer with a scripted upstream."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from demo import tools
 from demo.agent import AgentEvent
 from demo.agents import run_orchestrator, run_worker
 from demo.run import INJECTION_PAGE
-from tests.demo.conftest import DEMO_KEY, ORCHESTRATOR_KEY, FakeUpstream, bridged_client, completion
+from tests.conftest import DEMO_KEY, ORCHESTRATOR_KEY, FakeUpstream, completion
+from tests.demo.conftest import bridged_client
 
 
 def _trace(events: list[AgentEvent]) -> list[tuple[str, str, str]]:

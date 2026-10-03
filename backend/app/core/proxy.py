@@ -1,85 +1,230 @@
 import logging
+import time
 import uuid
+from datetime import UTC, datetime
+from typing import NoReturn
 
-from app.core.pipeline import Pipeline
-from app.models import Action, CanonicalRequest, Checkpoint, Decision, Message
+from app.core.budget import UsageLedger
+from app.core.pipeline import Pipeline, detect_reply_checkpoint, detect_request_checkpoint
+from app.core.signatures import SignatureFeed
+from app.models import (
+    Action,
+    AuditRecord,
+    CanonicalRequest,
+    Checkpoint,
+    Decision,
+    Message,
+    PolicySnapshot,
+)
+from app.models.policy import Caller
 from app.protocols.adapter import InvalidRequestError, ProviderAdapter
+from app.protocols.audit import AuditSink
+from app.protocols.policy_provider import PolicyProvider
 from app.protocols.upstream import Upstream, UpstreamError
 from app.schemas.chat_completion_request import ChatCompletionRequest
 from app.schemas.chat_completion_response import ChatCompletionResponse
 from app.schemas.control_trace import ControlTrace
+from app.schemas.tool_check_request import ToolCheckRequest
+from app.schemas.tool_check_response import ToolCheckResponse
 
 logger = logging.getLogger(__name__)
 
 UPSTREAM_UNAVAILABLE = "upstream_unavailable"
+AUTH_FAILED = "auth_failed"
+BAD_REQUEST = "bad_request"
+# CanonicalRequest.model of a tool-guard request: the guard body in the contract names no model.
+GUARD_MODEL = "tool_guard"
 
 
-def _request_checkpoint(request: CanonicalRequest) -> Checkpoint:
-    """A conversation ending in a tool message is data coming back from a tool."""
-    if request.messages and request.messages[-1].role == "tool":
-        return Checkpoint.TOOL_RESULT
-    return Checkpoint.INPUT
-
-
-def _reply_checkpoint(reply: Message) -> Checkpoint:
-    return Checkpoint.TOOL_CALL if reply.tool_calls else Checkpoint.OUTPUT
+class UnauthorizedError(Exception):
+    """The API key is missing or names no caller in the policy. The route answers 401."""
 
 
 class ProxyService:
-    """One chat request end to end: adapt, check, forward, check the reply, respond.
+    """One chat request end to end: auth, adapt, check, forward, check the reply, respond.
 
-    Depends only on protocols and the pipeline. Vendor JSON is touched only through the
-    adapter and the upstream client.
+    Every request takes one policy snapshot at its start and uses it to the end, so a hot reload
+    never mixes two policy versions in one request. Depends only on protocols and the pipeline.
+    Vendor JSON is touched only through the adapter and the upstream client.
     """
 
-    def __init__(self, adapter: ProviderAdapter, pipeline: Pipeline, upstream: Upstream) -> None:
+    def __init__(
+        self,
+        adapter: ProviderAdapter,
+        pipeline: Pipeline,
+        upstream: Upstream,
+        policy: PolicyProvider,
+        ledger: UsageLedger,
+        audit: AuditSink,
+        signatures: SignatureFeed | None = None,
+    ) -> None:
         self._adapter = adapter
         self._pipeline = pipeline
         self._upstream = upstream
+        self._policy = policy
+        self._ledger = ledger
+        self._audit = audit
+        self._signatures = signatures
 
     async def handle(
-        self, body: ChatCompletionRequest, *, caller_id: str
+        self, body: ChatCompletionRequest, *, api_key: str | None
     ) -> ChatCompletionResponse:
-        """Raises InvalidRequestError for a malformed body. The route answers 400."""
+        """Raises UnauthorizedError (401) or InvalidRequestError (400), both audited."""
+        snapshot = self._policy.current()
         request_id = str(uuid.uuid4())
-        request = self._adapter.to_canonical(body, request_id=request_id, caller_id=caller_id)
-        request = request.model_copy(update={"checkpoint": _request_checkpoint(request)})
-        decisions: list[Decision] = []
+        caller_id, caller = await self._authenticate(snapshot, api_key, request_id)
+        try:
+            request = self._adapter.to_canonical(body, request_id=request_id, caller_id=caller_id)
+        except InvalidRequestError as exc:
+            await self._bad_request(snapshot, str(exc), request_id, caller_id)
+        request = request.model_copy(
+            update={"checkpoint": detect_request_checkpoint(request.messages)}
+        )
+        await self._refresh_signatures(snapshot)
+        model = body.model
 
         # input or tool_result checkpoint
-        decision, request = await self._pipeline.run(request)
-        decisions.append(decision)
+        decision, forwarded = await self._pipeline.run(request, snapshot, caller)
+        decisions = [decision]
         if decision.action is Action.BLOCK:
-            return self._blocked(body.model, request_id, decisions)
+            return self._blocked(model, request_id, decisions)
+        # Counted only once the request is allowed and about to reach the model.
+        self._ledger.record_request(caller_id)
 
+        model_cfg = snapshot.policy.models.get(model)
+        started = time.perf_counter()
         try:
-            payload = self._adapter.to_upstream(request, body)
-            upstream_response = await self._upstream.chat(body.model, payload)
-            reply = self._adapter.reply_to_canonical(upstream_response)
-        except (UpstreamError, InvalidRequestError):
-            logger.exception("upstream failed for request %s", request_id)
-            return self._upstream_unavailable(body.model, request_id, decisions)
-
-        # tool_call or output checkpoint
-        reply_request = request.model_copy(
-            update={"checkpoint": _reply_checkpoint(reply), "reply": reply}
-        )
-        decision, reply_request = await self._pipeline.run(reply_request)
-        decisions.append(decision)
-        if decision.action is Action.BLOCK:
-            return self._blocked(body.model, request_id, decisions)
-
-        # the pipeline may have redacted the reply
-        final_reply = reply_request.reply if reply_request.reply is not None else reply
-        try:
-            return self._adapter.to_response(
-                upstream_response,
-                final_reply,
-                ControlTrace(request_id=request_id, decisions=decisions),
+            if model_cfg is None:
+                raise UpstreamError(f"model {model!r} has no upstream in the policy")
+            upstream_response = await self._upstream.chat(
+                self._adapter.to_upstream(forwarded, body),
+                base_url=model_cfg.upstream_base_url,
+                timeout_s=model_cfg.timeout_s,
             )
-        except InvalidRequestError:
-            logger.exception("unusable upstream response for request %s", request_id)
-            return self._upstream_unavailable(body.model, request_id, decisions)
+            reply = self._adapter.reply_to_canonical(upstream_response)
+            usage = self._adapter.reply_usage(upstream_response)
+        except (UpstreamError, InvalidRequestError) as exc:
+            latency_ms = (time.perf_counter() - started) * 1000.0
+            # The messages of both errors never quote the upstream body, which may carry PII.
+            reason = f"upstream for model {model!r} failed: {exc}"
+            logger.warning("request %s (caller %s): %s", request_id, caller_id, reason)
+            await self._event(
+                snapshot,
+                UPSTREAM_UNAVAILABLE,
+                reason,
+                request_id=request_id,
+                caller_id=caller_id,
+                model=model,
+                latency_ms=latency_ms,
+            )
+            trace = ControlTrace(request_id=request_id, decisions=decisions)
+            return self._adapter.refusal(model, trace, UPSTREAM_UNAVAILABLE, reason)
+        usage = usage.model_copy(
+            update={"upstream_latency_ms": (time.perf_counter() - started) * 1000.0}
+        )
+        tokens = usage.prompt_tokens + usage.completion_tokens
+        # The tokens are spent whatever the reply checkpoint decides.
+        self._ledger.record_usage(caller_id, tokens, tokens / 1000 * model_cfg.price_per_1k_tokens)
+
+        # tool_call or output checkpoint. The agent's own messages, not the redacted copy, so the
+        # conversation_id of the audit rows stays stable across the session.
+        reply_request = request.model_copy(
+            update={"checkpoint": detect_reply_checkpoint(reply), "reply": reply}
+        )
+        decision, checked = await self._pipeline.run(reply_request, snapshot, caller, usage=usage)
+        decisions.append(decision)
+        if decision.action is Action.BLOCK:
+            return self._blocked(model, request_id, decisions)
+        # the pipeline may have redacted the reply
+        final_reply = checked.reply if checked.reply is not None else reply
+        return self._adapter.to_response(
+            upstream_response,
+            final_reply,
+            ControlTrace(request_id=request_id, decisions=decisions),
+            model=model,
+            usage=usage,
+        )
+
+    async def check_tool(self, body: ToolCheckRequest, *, api_key: str | None) -> ToolCheckResponse:
+        """The tool guard: the tool_call checkpoint for one call. Raises UnauthorizedError."""
+        snapshot = self._policy.current()
+        request_id = str(uuid.uuid4())
+        caller_id, caller = await self._authenticate(snapshot, api_key, request_id)
+        await self._refresh_signatures(snapshot)
+        request = CanonicalRequest(
+            request_id=request_id,
+            caller_id=caller_id,
+            model=GUARD_MODEL,
+            checkpoint=Checkpoint.TOOL_CALL,
+            messages=body.messages,
+            reply=Message(role="assistant", tool_calls=[body.tool_call]),
+        )
+        decision, _ = await self._pipeline.run(request, snapshot, caller)
+        return ToolCheckResponse(allowed=decision.action is not Action.BLOCK, decision=decision)
+
+    async def reject_body(self, detail: str, *, api_key: str | None) -> NoReturn:
+        """A body the route itself could not parse, audited like one the adapter rejects.
+
+        Raises UnauthorizedError when the key is unknown (auth comes first, as for any request),
+        else InvalidRequestError. `detail` must name fields only, never quote the input.
+        """
+        snapshot = self._policy.current()
+        request_id = str(uuid.uuid4())
+        caller_id, _ = await self._authenticate(snapshot, api_key, request_id)
+        await self._bad_request(snapshot, detail, request_id, caller_id)
+
+    async def _authenticate(
+        self, snapshot: PolicySnapshot, api_key: str | None, request_id: str
+    ) -> tuple[str, Caller]:
+        """`api_key` is None when there is no Authorization header at all."""
+        found = snapshot.policy.caller_for_key(api_key) if api_key else None
+        if found is None:
+            # The key itself is never written anywhere.
+            reason = "missing Authorization header" if api_key is None else "unknown API key"
+            await self._event(snapshot, AUTH_FAILED, reason, request_id=request_id)
+            raise UnauthorizedError("invalid or missing API key")
+        return found
+
+    async def _bad_request(
+        self, snapshot: PolicySnapshot, detail: str, request_id: str, caller_id: str
+    ) -> NoReturn:
+        reason = f"malformed request body: {detail}"
+        await self._event(snapshot, BAD_REQUEST, reason, request_id=request_id, caller_id=caller_id)
+        raise InvalidRequestError(reason)
+
+    async def _refresh_signatures(self, snapshot: PolicySnapshot) -> None:
+        cfg = snapshot.policy.signatures
+        if self._signatures is None or cfg is None:
+            return
+        # A relative feed source resolves against the policy file's directory.
+        base_dir = snapshot.path.parent if snapshot.path is not None else None
+        await self._signatures.refresh(cfg, base_dir, self._audit, policy_version=snapshot.version)
+
+    async def _event(
+        self,
+        snapshot: PolicySnapshot,
+        check: str,
+        reason: str,
+        *,
+        request_id: str,
+        caller_id: str | None = None,
+        model: str | None = None,
+        latency_ms: float = 0.0,
+    ) -> None:
+        """Audit a system event (auth_failed, bad_request, upstream_unavailable)."""
+        await self._audit.write(
+            AuditRecord(
+                ts=datetime.now(UTC).isoformat(),
+                request_id=request_id,
+                caller_id=caller_id,
+                model=model,
+                check=check,
+                action=Action.BLOCK,
+                reason=reason,
+                latency_ms=latency_ms,
+                policy_version=snapshot.version,
+            )
+        )
 
     def _blocked(
         self, model: str, request_id: str, decisions: list[Decision]
@@ -89,10 +234,3 @@ class ProxyService:
         reason = next((r.reason for r in decision.results if r.check == decision.blocked_by), "")
         trace = ControlTrace(request_id=request_id, decisions=decisions)
         return self._adapter.refusal(model, trace, decision.blocked_by or "unknown", reason)
-
-    def _upstream_unavailable(
-        self, model: str, request_id: str, decisions: list[Decision]
-    ) -> ChatCompletionResponse:
-        trace = ControlTrace(request_id=request_id, decisions=decisions)
-        reason = "the upstream model did not return a usable response"
-        return self._adapter.refusal(model, trace, UPSTREAM_UNAVAILABLE, reason)

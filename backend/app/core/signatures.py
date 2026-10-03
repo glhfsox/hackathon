@@ -126,7 +126,7 @@ def load_signatures(
     return signatures, doc.version
 
 
-def _fingerprint(source: str, signatures: list[Signature], version: str) -> tuple:
+def _fingerprint(source: str, signatures: list[Signature], version: str) -> tuple[object, ...]:
     return (
         source,
         version,
@@ -151,7 +151,7 @@ class SignatureFeed:
         self.version: str | None = None
         self._source: tuple[str, Path | None] | None = None
         self._last_attempt: float | None = None
-        self._fingerprint: tuple | None = None
+        self._fingerprint: tuple[object, ...] | None = None
         self._last_error: str | None = None
 
     def current(self) -> list[Signature] | None:

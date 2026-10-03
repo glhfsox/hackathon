@@ -1,1 +1,1 @@
-"""Demo agents for the AI Control Layer and a local gateway stand-in. See demo/README.md."""
+"""Demo agents for the AI Control Layer and their scenario runner. See demo/README.md."""

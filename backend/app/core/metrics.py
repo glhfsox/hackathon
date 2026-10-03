@@ -269,7 +269,8 @@ def compute_metrics(
         decided_by[record.decided_by.value] += 1
         if record.action == Action.BLOCK:
             blocks_by_check[record.check] += 1
-            blocks_by_checkpoint[record.checkpoint.value] += 1
+            if record.checkpoint is not None:  # always set: system events are filtered out above
+                blocks_by_checkpoint[record.checkpoint.value] += 1
             if record.caller_id is not None:
                 blocks_by_caller[record.caller_id] += 1
             block_reasons[(record.check, record.reason)] += 1

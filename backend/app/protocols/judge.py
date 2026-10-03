@@ -15,3 +15,11 @@ class Judge(Protocol):
     async def judge(self, inp: JudgeInput) -> JudgeVerdict:
         """Raise JudgeUnavailable when no decision maker answers."""
         ...
+
+
+class JudgeHealth(Protocol):
+    """Reachability of the decision makers, for GET /api/health."""
+
+    async def health(self) -> dict[str, str]:
+        """{"jev": "up" | "down", "fallback": "up" | "down"}"""
+        ...
