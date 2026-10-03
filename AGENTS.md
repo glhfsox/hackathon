@@ -14,7 +14,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 ## 2. How it works
 
 - **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
-- **Checkpoints:** input → tool-call (model reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
+- **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
 - **Universal adapter:** every request is translated into one canonical internal model, and checks never see vendor JSON. Only the OpenAI adapter is built. Other formats are "one more adapter" by design.
 - **Checks:** all checks share one interface. They receive the canonical request plus their policy settings and return `allow | redact | block | flag` with a score, reason and latency. They run cheap before expensive and stop at the first block.
   - Rule checks:
