@@ -3,7 +3,7 @@
 **Feature Branch**: `feat/dashboard-filters-panels`
 **Created**: 2026-10-03
 **Status**: Ready for implementation
-**Input**: Share an editable time filter across Overview and Audit, and resize the sidebar, traces, and Playground prompt like editor panels. Implement on a separate branch from dev and test it.
+**Input**: Share an editable time filter across Overview and Audit, and resize traces and the Playground prompt like editor panels. The follow-up removes the single-directory sidebar, enlarges the top navigation, removes the clock and terminal status text, and improves empty-space guidance. Implement on a separate branch from dev and test it.
 
 ## User Scenarios & Testing
 
@@ -22,13 +22,13 @@ An operator selects a clearly highlighted preset or enters a custom duration and
 
 ### User Story 2 — Resize the workspace (Priority: P1)
 
-An operator gives navigation, Audit trace, Playground decision trace/raw trace, and prompt composer more or less space by dragging their shared boundaries.
+An operator gives Audit trace, Playground decision trace/raw trace, and prompt composer more or less space by dragging their shared boundaries.
 
 **Why this priority**: Fixed widths and a single-line prompt prevent comfortable inspection and editing.
 **Independent Test**: Drag every separator and confirm the relevant panel changes size, stays usable at its limits, and can also be resized with a keyboard.
 
 **Acceptance Scenarios**:
-1. Resize navigation and Audit trace horizontally.
+1. Resize Audit trace horizontally.
 2. Resize the Playground trace column horizontally and decision/raw trace split vertically.
 3. Resize the multiline prompt vertically without losing the draft or submitting it; send with its button or Ctrl/Cmd+Enter.
 4. Keyboard arrows resize focused separators; minimum sizes preserve usable neighboring panels.
@@ -44,7 +44,7 @@ An operator gives navigation, Audit trace, Playground decision trace/raw trace, 
 - **FR-001**: Share one relative time-window selection across Overview and Audit and include it in audit exports.
 - **FR-002**: Provide visibly active presets, labeled editable duration, Apply action, and accessible validation feedback. Show it only on pages it affects.
 - **FR-003**: Ignore obsolete polling responses after the active query changes.
-- **FR-004**: Supply discoverable pointer and keyboard resize handles for all named panels, constrained by available space.
+- **FR-004**: Supply discoverable pointer and keyboard resize handles for the Audit and Playground panels, constrained by available space.
 - **FR-005**: Support multiline prompt editing, explicit Send, and Ctrl/Cmd+Enter without changing middleware decisions or conversation safety.
 - **FR-006**: Verify the interactions in a browser as well as lint and production build; document exact results.
 
@@ -60,3 +60,7 @@ An operator gives navigation, Audit trace, Playground decision trace/raw trace, 
 - “Movable” means resizing shared boundaries, consistent with the user's editor analogy; rearranging panels is outside this feature.
 - Retain the terminal theme and existing backend API defined in [contracts/http-api.md](../../contracts/http-api.md).
 - Use the explicitly requested dev base rather than the repository's usual main base.
+
+## Follow-up — Simplify the application shell (2026-10-03)
+
+The application has one directory, so remove the redundant directory sidebar and its divider. Keep the four existing top navigation tabs, enlarge their hit areas and mark the active page. Remove the clock, localhost identity, NORMAL badge and aegis:// status path. Use restrained branding, spacing and useful Playground empty-state guidance to give the full-width workspace structure. Keep all trace/composer resizing and the shared filter. Test with isolated browser fixtures; do not start or connect a backend. Continue on the existing feature branch without publishing or merging.

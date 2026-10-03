@@ -4,7 +4,7 @@
 
 ## Summary
 
-Share App-owned duration state across Overview/Audit, with active presets and validated editable duration. Add one accessible split-panel component for navigation, traces, and a multiline Playground composer. Guard polling against stale responses. Existing [HTTP contracts](../../contracts/http-api.md) already support since; no API changes.
+Share App-owned duration state across Overview/Audit, with active presets and validated editable duration. Add one accessible split-panel component for traces, and a multiline Playground composer. Guard polling against stale responses. Existing [HTTP contracts](../../contracts/http-api.md) already support since; no API changes.
 
 ## Technical Context
 
@@ -28,4 +28,6 @@ Pass before and after design: frontend only displays backend decisions; all HTTP
 
 ## Verification
 
-Write browser cases first, run to establish expected failures, implement the tasks, then run npm test, npm run lint, npm run build. Inspect a browser screenshot and run an additional smoke against the real backend with temporary logs and generated test key. Keep the dev server available for the user's own test. Commit dependency changes separately.
+Write browser cases first, run to establish expected failures, implement the tasks, then run npm test, npm run lint, npm run build. Inspect browser screenshots with test-only route fixtures. The user explicitly wants frontend testing only; do not start or connect a backend. Keep the dev server available for the user's own test. Commit dependency changes separately.
+
+Follow-up: remove the directory/sidebar split from App, enlarge the branded header, remove clock/status-path clutter, and replace bare Playground placeholders with guidance. Keep the existing four-tab navigation and remaining split panels.

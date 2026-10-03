@@ -101,9 +101,17 @@ async function resize(page: Page, handle: Locator, axis: 'x' | 'y', delta: numbe
 
 test('all panel dividers work with pointer and keyboard', async ({ page }) => {
   await page.goto('/#audit')
-  await resize(page, page.getByRole('separator', { name: 'Resize navigation' }), 'x', 80)
+  await expect(page.getByRole('separator', { name: 'Resize navigation' })).toHaveCount(0)
+  await expect(page.getByRole('complementary')).toHaveCount(0)
+  await expect(page.getByText('NORMAL', { exact: true })).toHaveCount(0)
+  await expect(page.locator('header')).not.toContainText('aegis@localhost')
+  await expect(page.locator('footer')).not.toContainText('aegis://')
+  await expect(page.locator('header')).not.toContainText(/\d{2}:\d{2}:\d{2}/)
+  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link')).toHaveCount(4)
+  await expect(page.locator('nav a[href="#audit"]')).toHaveAttribute('aria-current', 'page')
   await resize(page, page.getByRole('separator', { name: 'Resize audit trace' }), 'x', -100)
   await page.locator('nav a[href="#playground"]').click()
+  await expect(page.getByRole('heading', { name: 'Inspect every interaction.' })).toBeVisible()
   await resize(page, page.getByRole('separator', { name: 'Resize playground trace' }), 'x', -100)
   await resize(page, page.getByRole('separator', { name: 'Resize decision trace' }), 'y', -80)
   await resize(page, page.getByRole('separator', { name: 'Resize prompt' }), 'y', -80)

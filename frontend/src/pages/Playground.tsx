@@ -113,7 +113,14 @@ export default function Playground() {
               E VITE_PLAYGROUND_API_KEY is not set: the proxy will answer 401. See frontend/.env.example.
             </div>
           )}
-          {turns.length === 0 && <div className="dim">// type a prompt below or pick a :preset</div>}
+          {turns.length === 0 && (
+            <div className="workspace-welcome">
+              <span className="accent">PLAYGROUND</span>
+              <h1>Inspect every interaction.</h1>
+              <p>Write a prompt below or try a preset. Select a reply to explore its security checks and decision trace.</p>
+              <div className="workspace-flow"><span>01 prompt</span><span aria-hidden="true">→</span><span>02 checks</span><span aria-hidden="true">→</span><span>03 decision</span></div>
+            </div>
+          )}
           {turns.map((t, i) => {
             const decisions = t.control?.decisions ?? []
             const blockedBy = decisions.find((d) => d.action === 'block')
@@ -152,7 +159,7 @@ export default function Playground() {
       } second={
         <SplitPane className="grow" label="Resize decision trace" direction="vertical" initial={0.65} minFirst={100} minSecond={80} first={
           <Pane title="decision.trace" className="grow">
-            {!current?.control && <div className="dim">// select a message</div>}
+            {!current?.control && <div className="trace-empty"><span className="bright">Awaiting a decision</span><p>Check results, risk scores and reasons appear here when a selected reply includes a trace.</p></div>}
             {current?.control?.decisions.map((d, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
                 <div className={d.action === 'allow' ? 'bright' : 'accent'}>
@@ -181,9 +188,9 @@ export default function Playground() {
           </Pane>
         } second={
           <Pane title="control.json" className="grow">
-            <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap' }} className="dim">
-              {current?.control ? JSON.stringify(current.control, null, 2) : '{}'}
-            </pre>
+            {current?.control ? (
+              <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap' }} className="dim">{JSON.stringify(current.control, null, 2)}</pre>
+            ) : <div className="trace-empty dim">The selected reply’s control payload will appear here.</div>}
           </Pane>
         } />
       } />

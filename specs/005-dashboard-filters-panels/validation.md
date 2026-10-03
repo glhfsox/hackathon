@@ -27,3 +27,13 @@ The existing Vite server on http://localhost:5173 serves this checkout with hot 
 Only a development dependency was added: Playwright. No runtime dependency, backend API, production policy, or security decision changed. Panel sizes are retained while their components are mounted; reload persistence and panel reordering are outside scope.
 
 User confirmed that they will later merge this feature into dev. No feature merge into main or dev was performed.
+
+## Shell simplification follow-up (2026-10-03)
+
+- `npm run lint` and `npm run build` from frontend: both exit 0; Vite built 27 modules. An initial invocation from the repository root failed because the package is inside frontend; corrected by running in the package directory.
+- `npm test -- --workers=2`: **6 passed in 9.2s**, using Chrome and test-only API route fixtures. Initial sandbox attempt could not bind the local frontend port (EPERM); the approved run succeeded. No backend was started or contacted by these tests.
+- Screenshots reviewed at 1440×900 and 900×650: larger four-tab header, no directory sidebar/clock/status path, full-width panels, useful Playground guidance, and accessible prompt controls with no horizontal document overflow.
+- Existing resize coverage now verifies the removed navigation divider stays absent and the remaining Audit/Playground handles still work; header tab count and active-page semantics are checked.
+- `git diff --check`: exit 0.
+
+Changes remain on the local feature branch; no push or merge is requested for this follow-up.

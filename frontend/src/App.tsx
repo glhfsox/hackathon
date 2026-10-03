@@ -1,19 +1,18 @@
 import { useEffect, useState } from 'react'
 import { getHealth } from './api/client'
-import { useClock, usePolled } from './hooks'
+import { usePolled } from './hooks'
 import AuditLog from './pages/AuditLog'
 import Overview from './pages/Overview'
 import PolicyEditor from './pages/PolicyEditor'
 import Playground from './pages/Playground'
 import { RANGES, type TimeRange } from './ranges'
 import TimeFilter from './components/TimeFilter'
-import SplitPane from './components/SplitPane'
 
 const PAGES = [
-  { id: 'overview', tab: '1:overview', file: 'overview' },
-  { id: 'audit', tab: '2:audit', file: 'audit.log' },
-  { id: 'policy', tab: '3:policy', file: 'policy.yaml' },
-  { id: 'playground', tab: '4:playground', file: 'playground' },
+  { id: 'overview', tab: '1:overview' },
+  { id: 'audit', tab: '2:audit' },
+  { id: 'policy', tab: '3:policy' },
+  { id: 'playground', tab: '4:playground' },
 ] as const
 type PageId = (typeof PAGES)[number]['id']
 
@@ -25,7 +24,6 @@ function pageFromHash(): PageId {
 export default function App() {
   const [page, setPage] = useState<PageId>(pageFromHash)
   const [range, setRange] = useState<TimeRange>({ minutes: RANGES['24h'], label: '24h' })
-  const clock = useClock()
   const health = usePolled(getHealth, 5000)
 
   useEffect(() => {
@@ -39,48 +37,27 @@ export default function App() {
   return (
     <div className="app">
       <header className="tabbar">
-        <nav>
+        <div className="brand"><span className="brand-name">AEGIS<span className="accent">_</span></span><span className="brand-caption">AI control layer</span></div>
+        <nav aria-label="Main navigation">
           {PAGES.map((p) => (
-            <a key={p.id} href={`#${p.id}`} className={`tab ${p.id === page ? 'active' : ''}`}>
+            <a key={p.id} href={`#${p.id}`} className={`tab ${p.id === page ? 'active' : ''}`} aria-current={p.id === page ? 'page' : undefined}>
               {p.id === page ? `[${p.tab}]` : p.tab}
             </a>
           ))}
         </nav>
-        <div className="accent">
-          aegis@localhost <span className="dim">{clock}</span>
-        </div>
       </header>
 
-      <SplitPane className="body" label="Resize navigation" initial={0.17} minFirst={140} minSecond={360} first={
-        <aside className="tree" aria-label="Navigation">
-          <div className="dim" style={{ padding: '0 8px 4px' }}>
-            ▾ aegis/
-          </div>
-          {PAGES.map((p) => (
-            <a key={p.id} href={`#${p.id}`} className={p.id === page ? 'active' : ''}>
-              {'  '}
-              {p.file}
-            </a>
-          ))}
-          <div className="fill" />
-          <div className="dim" style={{ padding: '0 8px' }}>
-            ~<br />~<br />~
-          </div>
-        </aside>
-      } second={
-        <main className="main">
-          {page === 'overview' && <Overview range={range} />}
-          {page === 'audit' && <AuditLog range={range} />}
-          {page === 'policy' && <PolicyEditor onSaved={health.reload} />}
-          {page === 'playground' && <Playground />}
-        </main>
-      } />
+      <main className="main">
+        {page === 'overview' && <Overview range={range} />}
+        {page === 'audit' && <AuditLog range={range} />}
+        {page === 'policy' && <PolicyEditor onSaved={health.reload} />}
+        {page === 'playground' && <Playground />}
+      </main>
 
       <footer className="statusline">
         <div>
-          <span className="rev">NORMAL</span>
-          <span>aegis://{PAGES.find((p) => p.id === page)?.file}</span>
-          <span className="dim">{h?.policy_version ?? '-'}</span>
+          <span className="dim">policy</span>
+          <span>{h?.policy_version ?? '—'}</span>
         </div>
         <div>
           {health.error ? (
@@ -98,7 +75,6 @@ export default function App() {
               </span>
             </>
           )}
-          <span className="dim">utf-8 | {clock}</span>
         </div>
       </footer>
       {(page === 'overview' || page === 'audit') && <TimeFilter range={range} onChange={setRange} />}

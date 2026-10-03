@@ -20,3 +20,9 @@
 - [x] T011 Commit the feature branch and prepare a dev-targeted PR description in specs/005-dashboard-filters-panels/pr-description.md.
 
 Setup → test baseline → US1 → US2 → verification. Stories use shared App/CSS files, so implementation is sequential. Spec-kit research alone was delegated read-only. No extension hooks are configured. Checklist: 6 satisfied, 0 unchecked.
+
+## Follow-up — Simpler full-width shell
+- [x] T012 Update the feature specification/plan for the single-directory shell and frontend-only verification.
+- [x] T013 Remove the directory sidebar, clock and terminal status path; enlarge the existing top navigation and add useful Playground empty-state guidance.
+- [x] T014 Update existing browser coverage for the shell and remaining dividers.
+- [x] T015 Run frontend browser checks, lint/build and visual review; record results and commit locally on the existing branch. Do not push or merge.

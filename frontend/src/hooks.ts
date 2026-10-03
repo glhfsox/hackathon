@@ -68,14 +68,5 @@ export function usePolled<T>(load: () => Promise<T>, intervalMs: number, key = '
   }
 }
 
-export function useClock(): string {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
-  return now.toLocaleTimeString('en-GB')
-}
-
 export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-GB')
 export const shortId = (id: string | null) => (id ? id.slice(0, 8) : '-')
