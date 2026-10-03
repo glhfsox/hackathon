@@ -1,6 +1,9 @@
 # frontend/AGENTS.md — rules for work inside `frontend/`
 
-Adds to the root `AGENTS.md`; it does not repeat it. Read `contracts/` before writing code here.
+Adds to the root `AGENTS.md`; it does not repeat it. Read before writing code here:
+- [`contracts/http-api.md`](../contracts/http-api.md): the `/api/*` endpoints and the `control` field the playground renders
+- [`contracts/models.md`](../contracts/models.md): TypeScript types mirror it
+- [`docs/architecture.md`](../docs/architecture.md) §9: the pages and their data sources
 
 ## Scope
 

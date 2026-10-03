@@ -1,6 +1,9 @@
 # backend/AGENTS.md — rules for work inside `backend/`
 
-Adds to the root `AGENTS.md`; it does not repeat it. Read `contracts/` and `docs/architecture.md` before writing code here.
+Adds to the root `AGENTS.md`; it does not repeat it. Read before writing code here:
+- [`docs/architecture.md`](../docs/architecture.md): request lifecycle, pipeline, Jev fallback, code layout (§10)
+- [`contracts/models.md`](../contracts/models.md): Pydantic models mirror it
+- [`contracts/http-api.md`](../contracts/http-api.md): endpoints you implement
 
 ## Scope
 

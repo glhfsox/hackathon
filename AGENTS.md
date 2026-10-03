@@ -4,7 +4,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 ## 1. Project
 
-**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Full background: `PROJECT_CONTEXT_1.md`.
+**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](docs/architecture.md). Data shapes and endpoints: [`contracts/`](contracts/README.md).
 
 - **Rules enforce, Jev decides.** Deterministic rule checks are hard limits, and a rule block is final. **Jev** is the AI decision maker, a remote (non-local) LLM. Jev scores what the rules let through, and the score is compared against a policy threshold. If Jev is unavailable, the request goes to local Ollama model
 - **Policy is the only source of behaviour.** It is one YAML file, validated on load and hot-reloaded. An invalid edit is rejected and the old policy stays active. Nothing is hard-coded. Judges will edit the policy while the system runs.
@@ -12,6 +12,8 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 - Design details not written down in `docs/` or `contracts/` are undecided. Ask your human instead of inventing them. Ask before expanding scope.
 
 ## 2. How it works
+
+Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
 
 - **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
@@ -127,3 +129,5 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — Jev = remote LLM decision maker (closes the "what jev is" question); rules enforce, Jev cannot override a rule block; Jev unavailable → fail closed.
 - 2026-10-03 — Repo layout + "every fact in one place" rule adopted (section 4).
 - 2026-10-03 — OPEN: Jev endpoint, auth, request/response format, cost.
+- 2026-10-03 — Jev unavailable → local Ollama fallback; both unavailable → fail closed (supersedes the "fail closed" part above).
+- 2026-10-03 — Draft v0.1 of `docs/architecture.md` and `contracts/` (models, HTTP API) added. OPEN: policy schema (`contracts/policy.example.yaml`).
