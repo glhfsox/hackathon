@@ -38,7 +38,7 @@ Goal: documented future ingestion and guarded retrieval. Independent test: follo
 ## Phase 6: Verification and delivery
 
 - [X] T013 Run Ruff/pytest and generate/validate default data; record results in specs/002-treasury-rag-data/validation.md
-- [ ] T014 Commit and push feature changes; prepare PR description in specs/002-treasury-rag-data/pr-description.md
+- [X] T014 Commit feature changes and prepare PR description in specs/002-treasury-rag-data/pr-description.md (publishing deferred after user declined push approval)
 
 ## Dependencies and parallel opportunities
 

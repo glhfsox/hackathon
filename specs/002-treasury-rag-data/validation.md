@@ -19,3 +19,5 @@ Tests verify deterministic source/SQLite bytes, changes with a different seed, a
 Generated files stay local under the ignored `demo_data/generated/` directory and can be reproduced. The previous generator smoke output was retained under `treasury-initial/`; `treasury/` is the final source corpus.
 
 No embeddings, vector ranking, model-based detection, or full agent flow was run; these remain design-only as requested. Template diversity is limited. Confidentiality annotations do not establish a middleware enforcement capability.
+
+Delivery: Local commits and a separate docs branch are prepared. The user declined the sync/push execution approval; neither branch was published and no PR was opened. PR text is available in `pr-description.md`.
