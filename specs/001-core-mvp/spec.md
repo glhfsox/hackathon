@@ -92,6 +92,8 @@ Traffic that the rules let through is judged by Jev, which scores the risk of th
 
 ### User Story 5 - Tool execution guard (Priority: P2)
 
+> **Superseded** (AGENTS.md §8, 2026-10-03): API-key auth, the tool guard and policy callers were removed; every request is the caller `anonymous` until JWT identity lands.
+
 A second entry point lets an agent, or a wrapper around its tools, ask whether a specific tool call may run immediately before running it. An agent that ignores the proxy's verdict is still stopped.
 
 **Why this priority**: it closes the bypass in which an agent executes a tool despite a refusal.
@@ -158,7 +160,7 @@ A tiny agent exercises the layer with tools designed to trigger the checks, and 
 ### Edge Cases
 
 - Malformed request body → rejected as a bad request and audited (`bad_request`).
-- Unknown or missing API key → rejected as unauthorized and audited (`auth_failed`).
+- ~~Unknown or missing API key → rejected as unauthorized and audited (`auth_failed`).~~ **Superseded** (AGENTS.md §8, 2026-10-03): API-key auth, the tool guard and policy callers were removed; every request is the caller `anonymous` until JWT identity lands.
 - Upstream model unavailable → the agent receives a chat-format refusal with reason `upstream_unavailable`, which is audited.
 - Policy swapped during concurrent requests → each request uses exactly one policy version.
 - Tool result carrying injected instructions ("ignore previous instructions…") → blocked at `tool_result`.
@@ -174,7 +176,7 @@ A tiny agent exercises the layer with tools designed to trigger the checks, and 
 **Integration**
 
 - **FR-001**: The system MUST accept requests in the standard chat-completions protocol, including tool definitions and tool calls, so that an agent switches by changing only its base URL and API key.
-- **FR-002**: The system MUST identify the caller from the API key and reject unknown keys.
+- **FR-002**: ~~The system MUST identify the caller from the API key and reject unknown keys.~~ **Superseded** (AGENTS.md §8, 2026-10-03): API-key auth, the tool guard and policy callers were removed; every request is the caller `anonymous` until JWT identity lands.
 - **FR-003**: The system MUST translate each request into one canonical internal form before any check runs (shape: `contracts/models.md`). Checks MUST NOT see vendor-specific formats.
 - **FR-004**: The system MUST inspect traffic at the four checkpoints `input`, `tool_call`, `tool_result` and `output`.
 - **FR-005**: The system MUST forward allowed (possibly redacted) requests to the upstream model configured for the requested model in the policy.
@@ -191,7 +193,7 @@ A tiny agent exercises the layer with tools designed to trigger the checks, and 
 
 **Policy**
 
-- **FR-013**: All check modes, parameters, thresholds, profiles, models, callers, permissions, budgets and the signature feed location MUST come from the single policy. Schema: **[NEEDS CLARIFICATION: policy schema, `contracts/policy.example.yaml`, is not written yet]**.
+- **FR-013**: All check modes, parameters, thresholds, profiles, models, permissions, budgets and the signature feed location MUST come from the single policy. Schema: **[NEEDS CLARIFICATION: policy schema, `contracts/policy.example.yaml`, is not written yet]**.
 - **FR-014**: A policy change MUST take effect for requests starting 2 s or more after it is saved, without a restart.
 - **FR-015**: An invalid policy MUST be rejected with field-level errors while the previous policy stays active.
 - **FR-016**: The policy MUST define at least the profiles `strict`, `balanced` and `permissive`, with one of them active.
@@ -215,7 +217,7 @@ A tiny agent exercises the layer with tools designed to trigger the checks, and 
 
 **Demo and tests**
 
-- **FR-025**: A demo agent MUST exist with `query_customers` (fake customer data that includes PII) and `run_shell` tools, using both the proxy and the tool guard.
+- **FR-025**: A demo agent MUST exist with `query_customers` (fake customer data that includes PII) and `run_shell` tools, using the proxy. (The tool-guard part is superseded, AGENTS.md §8.)
 - **FR-026**: Test cases MUST be data files, and one command MUST run all of them. Every check MUST have at least one allowed and one blocked or redacted case.
 
 ### Key Entities _(include if feature involves data)_
@@ -227,7 +229,7 @@ Shapes are defined in [`contracts/models.md`](../../contracts/models.md). Only t
 - **Decision**: the combined outcome at one checkpoint, and which check blocked it, if any.
 - **Judge input / verdict**: what the AI decision maker receives (redacted text plus context) and returns (risk score, reason, categories, who decided).
 - **Audit record**: one immutable log row per check result or system event.
-- **Policy**: the single behaviour definition: profiles, check modes and parameters, models, callers, budgets, Jev settings and the signature feed.
+- **Policy**: the single behaviour definition: profiles, check modes and parameters, models, budgets, Jev settings and the signature feed.
 - **Caller**: an API-key holder with a role, allowed models, allowed tools and budgets.
 
 ## Success Criteria _(mandatory)_

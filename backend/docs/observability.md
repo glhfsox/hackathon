@@ -26,9 +26,9 @@ All in the folder given to `JsonlAuditSink` (e.g. `backend/logs/`; keep it out o
 |--------|---------|
 | `id` | Increasing row id; continues across restarts. One writing process per folder. |
 | `ts` | ISO 8601 timestamp as the layer wrote it (UTC). |
-| `request_id`, `caller_id`, `model` | Null on system events that have none. |
+| `request_id`, `caller_id`, `model` | Null on system events that have none. `caller_id` is `anonymous` on every request until caller identity lands; older logs hold per-key callers (and `auth_failed` rows). |
 | `checkpoint` | `input`, `tool_call`, `tool_result`, `output`; null on system events. |
-| `check` | Check id, or a system event (`policy_loaded`, `policy_rejected`, `signature_feed_*`, `auth_failed`, `bad_request`, `upstream_unavailable`, `turn_summary`). |
+| `check` | Check id, or a system event (`policy_loaded`, `policy_rejected`, `signature_feed_*`, `bad_request`, `upstream_unavailable`, `turn_summary`). |
 | `action` | `allow`, `redact`, `block`, `flag`. |
 | `reason` | Why. Never contains the matched secret or PII. |
 | `score`, `latency_ms`, `decided_by` | `decided_by` is `rules`, `jev` or `fallback`. |
@@ -42,7 +42,7 @@ All in the folder given to `JsonlAuditSink` (e.g. `backend/logs/`; keep it out o
 | `is_system_event` | True for a system event (known id or no checkpoint). Exclude these rows from per-check charts. |
 | `category` | Attack category from a `signatures` or `jev` reason (first one named), else null. Best effort. |
 
-`metrics-history.jsonl` columns: `ts`, `active_profile`, `requests`, `allowed`, `redacted`,
+`metrics-history.jsonl` columns: `ts`, `jev_threshold`, `requests`, `allowed`, `redacted`,
 `blocked`, `flagged`, `tokens_total`, `cost_total`, `overhead_p50_ms`, `overhead_p95_ms`,
 `rules_overhead_p50_ms`, `rules_overhead_p95_ms`, `jev_latency_p50_ms`, `jev_latency_p95_ms`,
 `sessions`, `turns`, `blocked_before_upstream`.

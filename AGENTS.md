@@ -15,7 +15,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
 
-- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
+- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and is protected with zero code changes. API keys are not checked: every request is the caller `anonymous` until caller identity (JWT) lands. An agent that ignores our verdict and runs a blocked tool anyway is not stopped by the layer.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
 - **Universal adapter:** every request is translated into one canonical internal model, and checks never see vendor JSON. Only the OpenAI adapter is built. Other formats are "one more adapter" by design.
 - **Checks:** all checks share one interface. They receive the canonical request plus their policy settings and return `allow | redact | block | flag` with a score, reason and latency. They run cheap before expensive and stop at the first block.
@@ -27,7 +27,7 @@ Summary only. If this section and [`docs/architecture.md`](docs/architecture.md)
     - budgets (tokens, cost, rate)
     - loop detection
   - AI check: Jev (prompt injection, hidden instructions in tool results, overall risk score).
-- **Policy:** controls which checks are on, the action per checkpoint (`off | monitor | redact | block`), thresholds, profiles (`strict | balanced | permissive`), models, callers and budgets.
+- **Policy:** controls which checks are on (a check is on when its section exists), their parameters, the Jev threshold, models, the allowed models and tools, and budgets. There are no modes or profiles: a finding blocks, `pii_secrets` redacts and lets the request through, and an error blocks.
 - **Blocked requests** return a normal OpenAI-format refusal with the reason, so agents don't crash.
 - **Reporting:**
   - The append-only audit log stores every decision with its reason, latency and cost, and it is exportable.
@@ -35,7 +35,7 @@ Summary only. If this section and [`docs/architecture.md`](docs/architecture.md)
 - **Tests:** data-driven YAML cases, run with one command. Every check has at least one allowed and one blocked case.
 - **Scope:**
   - We build: the layer, one tiny demo agent (a fake customer DB with PII, plus a shell/code tool), the dashboard and the tests.
-  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond API keys.
+  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or authentication (a teammate adds JWT-based caller identity).
 
 ## 3. Stack
 
@@ -139,3 +139,6 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — AuditRecord gained optional agent/economic fields and a `turn_summary` row per checkpoint (`contracts/models.md`); tokens and cost live only on that row. Free metrics for judges come from `logs/*.jsonl` (Power BI); Langfuse is self-hosted and optional, for the presentation only. (Artem)
 - 2026-10-03 — Policy validation rejects unknown check ids, checkpoints a check never runs at, unknown or mistyped params, and `jev` enabled where `pii_secrets` is off. Provisional schema lives in `backend/app/policy.py`; `backend/policy.yaml` is the documented example. (Artem)
 - 2026-10-03 — Demo: two agents on the bare OpenAI client (worker with Python tools behind the tool guard, orchestrator that delegates via a `delegate` tool call), in `backend/demo/`, with a local stand-in gateway until the real proxy lands; the proxy calls `app.pipeline.run_checkpoint`. (Artem)
+- 2026-10-03 — API-key auth, the tool guard (`POST /v1/tools/check`) and the policy `callers` section are removed. Every request is caller_id `anonymous` (`ANONYMOUS_CALLER` in `backend/app/core/proxy.py`) until JWT-based identity lands (teammate). `permissions` (`allowed_models`, `allowed_tools`) and `budget` (`requests_per_minute`, `tokens_per_day`, `cost_per_day`) are global parameters of their check sections. Supersedes the API-key and tool-guard parts of the entries above; constitution 2.0.0. (Artem)
+- 2026-10-03 — Modes and profiles are removed. A check is on when its `checks.<id>` section exists and then runs at every checkpoint it applies to; a finding blocks, `pii_secrets` redacts and continues, an error blocks (fail closed). One top-level `jev_threshold` replaces the profiles. `/api/metrics` reports `jev_threshold` instead of `active_profile`; `enabled_checks` keeps its per-checkpoint shape. Constitution 2.1.0. (Artem)
+- 2026-10-03 — `jev` and `pii_secrets` also run at `tool_call`. There they read the tool-call view (task, agent reasoning, calls; `CanonicalRequest.tool_call_view`), which `pii_secrets` redacts before Jev sees it; the agent's arguments are never changed. Rule checks run first, so a rule block stops a call before Jev is asked. (Artem)

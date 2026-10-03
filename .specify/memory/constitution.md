@@ -1,6 +1,11 @@
 <!--
 Sync Impact Report
-- Version change: template (unversioned) → 1.0.0 (initial ratification)
+- Version change: 2.0.0 → 2.1.0
+- I and VI: no strictness profiles or check modes; an erroring check always blocks
+- Earlier: 1.0.0 → 2.0.0
+- Redefined: VIII. Transparent Integration (no API-key identity, no second tool entry point)
+- Scope Constraints: authentication is out of scope (a teammate adds JWT identity)
+- Earlier: template (unversioned) → 1.0.0 (initial ratification)
 - Principles defined:
   I. Policy Is the Single Source of Behaviour
   II. Contracts First, Every Fact in One Place
@@ -24,8 +29,7 @@ Sync Impact Report
 
 ### I. Policy Is the Single Source of Behaviour
 
-- Every check, action, threshold, permission, budget, and strictness profile MUST come from the
-  one policy document. Nothing that changes a decision may be hard-coded.
+- Every check, threshold, permission, and budget MUST come from the one policy document. Nothing that changes a decision may be hard-coded.
 - A policy MUST be validated before it becomes active. An invalid policy MUST be rejected with a
   clear error, and the previously active policy MUST stay in force.
 - Policy changes MUST take effect on a running system without a restart, and each request MUST
@@ -76,8 +80,8 @@ open a hole.
 
 ### VI. Fail Closed, Explain Every Block
 
-- A check that errors, times out, or is unreachable MUST result in `block` when the check runs in
-  block mode, or `flag` in monitor mode. It MUST NOT silently allow.
+- A check that errors, times out, or is unreachable MUST result in `block`. It MUST NOT silently
+  allow.
 - Every block MUST return a well-formed, protocol-compatible response that names the check and
   the reason, so calling agents do not crash.
 
@@ -93,10 +97,9 @@ Rationale: resilience and traceability are the product; unrecorded decisions can
 
 ### VIII. Transparent Integration
 
-- An agent MUST be protectable by changing only its model endpoint and API key, with no code
-  changes. Caller identity MUST come from the API key.
-- Tool execution MUST also be guardable at a second entry point, so an agent that ignores a
-  verdict is still stopped.
+- An agent MUST be protectable by changing only its model endpoint, with no code changes.
+- Until caller identity lands, every request is one anonymous caller. The layer protects only
+  what passes through it: an agent that ignores a verdict and runs a blocked tool is not stopped.
 
 Rationale: zero-friction adoption is what makes the layer usable by any agent.
 
@@ -122,7 +125,7 @@ Rationale: 24 hours, four people; only the working control layer is scored.
   (fake customer data with PII, a shell/code executor); a dashboard with policy editor and chat
   playground; the automated test suite.
 - Out of scope: a multi-agent SDK or orchestrator, agent-topology configuration, RAG, adapters
-  beyond the first protocol, and authentication beyond API keys.
+  beyond the first protocol, and authentication (JWT-based caller identity is a teammate's work).
 
 ## Development Workflow
 
@@ -143,4 +146,4 @@ Rationale: 24 hours, four people; only the working control layer is scored.
 - Every plan and PR MUST be checked for compliance. A deviation MUST be justified in the plan's
   Complexity Tracking section or rejected.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-10-03
+**Version**: 2.1.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-10-03

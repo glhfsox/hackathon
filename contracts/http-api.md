@@ -2,7 +2,7 @@
 
 Base URL `http://localhost:8000`. All bodies are JSON unless noted. Model names refer to [models.md](models.md).
 
-## Agent-facing (`/v1`, auth: `Authorization: Bearer <api key>`)
+## Agent-facing (`/v1`, no auth: every request is the caller `anonymous`)
 
 ### `POST /v1/chat/completions`
 
@@ -23,18 +23,7 @@ Takes the standard OpenAI chat-completions request (`model`, `messages`, `tools`
     "control": { "request_id": "…", "decisions": [ … ] }
   }
   ```
-- **Errors:** `401` unknown key, `400` malformed body. The error body is `{ "error": { "message", "type" } }`, as in OpenAI. Both are audited.
-
-### `POST /v1/tools/check`
-
-The tool guard. Call it before executing a tool.
-
-```json
-// request
-{ "tool_call": ToolCall, "messages": [Message, …] }
-// response 200
-{ "allowed": true | false, "decision": Decision }
-```
+- **Errors:** `400` malformed body. The error body is `{ "error": { "message", "type" } }`, as in OpenAI. It is audited.
 
 ## Dashboard-facing (`/api`, no auth: local demo only)
 
@@ -51,13 +40,13 @@ The tool guard. Call it before executing a tool.
 `GET /api/metrics` response:
 ```json
 {
-  "active_profile": "balanced",
+  "jev_threshold": 0.6,
   "totals": { "requests": 0, "allowed": 0, "redacted": 0, "blocked": 0, "flagged": 0 },
   "blocks_by_check": { "<check>": 0 },
   "latency_ms_by_check": { "<check>": { "p50": 0.0, "p95": 0.0 } },
   "overhead_ms": { "p50": 0.0, "p95": 0.0 },
-  "budget_by_caller": { "<caller_id>": { "tokens_today": 0, "tokens_limit": 0, "cost_today": 0.0, "cost_limit": 0.0 } }
+  "budget_by_caller": { "anonymous": { "tokens_today": 0, "tokens_limit": 0, "cost_today": 0.0, "cost_limit": 0.0 } }
 }
 ```
 
-The playground uses `POST /v1/chat/completions` with the `playground` caller key and renders the `control` field.
+The playground uses `POST /v1/chat/completions` and renders the `control` field.
