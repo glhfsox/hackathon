@@ -31,3 +31,8 @@ Setup → test baseline → US1 → US2 → verification. Stories use shared App
 - [x] T016 Keep time-window presets/custom input and Audit filters; remove the ornamental Filters panel heading/frame.
 - [x] T017 Use plain section headings and remove decorative brackets from controls/status labels.
 - [x] T018 Update browser coverage, run frontend-only checks and record results.
+
+## Follow-up — Audit toolbar and tab names
+- [x] T019 Remove Audit toolbar/state and use plain unnumbered tab labels.
+- [x] T020 Update the existing time-window browser test for toolbar removal and retained Audit requests.
+- [x] T021 Run frontend-only browser checks and lint/build; record results and commit locally.

@@ -410,5 +410,3 @@ button:focus-visible, a:focus-visible, .split-handle:focus-visible {
 .workspace-flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; color: var(--accent); font-size: 11px; }
 .trace-empty { padding: 12px 0; }
 .trace-empty p { color: var(--fg-dim); margin: 8px 0 0; }
-
-.audit-filters { padding: 4px 0; flex-shrink: 0; }

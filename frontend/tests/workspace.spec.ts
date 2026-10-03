@@ -22,7 +22,7 @@ function windowMinutes(url: string) {
   return Math.round((Date.now() - Date.parse(since!)) / 60_000)
 }
 
-test('presets and custom window apply to Overview, Audit and exports', async ({ page }) => {
+test('presets and custom window apply to Overview and Audit without the old toolbar', async ({ page }) => {
   await page.goto('/')
   for (const [label, minutes] of [['15m', 15], ['1h', 60], ['24h', 1440], ['7d', 10080]] as const) {
     const changed = page.waitForRequest((r) => r.url().includes('/api/metrics?') && windowMinutes(r.url()) === minutes)
@@ -39,12 +39,13 @@ test('presets and custom window apply to Overview, Audit and exports', async ({ 
   const audit = page.waitForRequest((r) => r.url().includes('/api/audit?') && windowMinutes(r.url()) === 45)
   await page.locator('nav a[href="#audit"]').click()
   await audit
-  await page.locator('input').first().fill('demo')
-  for (const name of ['Export CSV', 'Export JSON']) {
-    const href = await page.getByRole('link', { name, exact: true }).getAttribute('href')
-    expect(windowMinutes(href!)).toBe(45)
-    expect(new URL(href!).searchParams.get('caller_id')).toBe('demo')
-  }
+  await expect(page.getByRole('combobox')).toHaveCount(0)
+  await expect(page.getByRole('checkbox')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Export CSV', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Export JSON', exact: true })).toHaveCount(0)
+  await expect(page.getByText('caller=', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('check=', { exact: true })).toHaveCount(0)
+  await expect(page.locator('nav a')).toHaveText(['Overview', 'Audit', 'Policy', 'Playground'])
   await page.locator('nav a[href="#overview"]').click()
   await expect(page.getByText('Last 45m', { exact: true })).toBeVisible()
 })

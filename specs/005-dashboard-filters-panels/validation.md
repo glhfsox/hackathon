@@ -49,3 +49,12 @@ The user clarified that time-window presets and custom durations must stay. All 
 - Overview and 900×650 Playground screenshots were visually reviewed: ordinary headings, no decorative tab brackets, and reachable prompt controls.
 
 No backend startup, push or merge was performed.
+
+## Audit toolbar removal (2026-10-04)
+
+- Removed caller/check/action/checkpoint controls, summary toggle and export links; Audit still queries the selected shared time window and retains its table/trace split. Removed numbered prefixes from the four navigation tabs.
+- `npm test -- --workers=2`: **6 passed in 16.9s**, with test-only API fixtures and no backend startup. Updated browser coverage checks the missing toolbar controls and plain tab labels while verifying the shared time-window request.
+- `npm run lint` and `npm run build`: exit 0 with no lint diagnostics; TypeScript/Vite built 27 modules.
+- `git diff --check`: exit 0.
+
+All changes remain local on feat/dashboard-filters-panels; no push or merge.

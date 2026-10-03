@@ -33,3 +33,5 @@ Write browser cases first, run to establish expected failures, implement the tas
 Follow-up: remove the directory/sidebar split from App, enlarge the branded header, remove clock/status-path clutter, and replace bare Playground placeholders with guidance. Keep the existing four-tab navigation and remaining split panels.
 
 Follow-up: retain editable time windows as explicitly clarified by the user, render normal h2 pane headings in the document flow, flatten Audit filters into a toolbar, and remove decorative brackets from UI labels. Existing browser cases verify filter functionality and the simplified headings.
+
+Follow-up (2026-10-04): remove the Audit filter/export toolbar and its unused state, retain shared time-window query/selection invalidation and table/trace panes, and use plain tab names.

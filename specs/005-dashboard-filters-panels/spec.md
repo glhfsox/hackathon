@@ -68,3 +68,7 @@ The application has one directory, so remove the redundant directory sidebar and
 ## Follow-up — Plain section labels (2026-10-03)
 
 Keep the time-window bar, presets, editable duration and Audit filtering: the user explicitly clarified that custom windows must remain usable for inspecting logs. Remove the ornamental Filters panel heading/frame, use ordinary section headings instead of terminal file names, and remove decorative square brackets from navigation, action buttons and status labels. Preserve actual JSON/policy data and redaction placeholders. Keep Alpin branding and all remaining resize controls.
+
+## Follow-up — Remove the Audit toolbar (2026-10-04)
+
+Remove the Audit caller/check/action/checkpoint controls, turn_summary toggle, separator and CSV/JSON export links. Keep the audit table, decision trace and shared time-window presets/custom input. Preserve the existing default hiding of turn_summary rows; summary data still supports the selected request's trace. Use plain Overview, Audit, Policy and Playground tab names without numeric prefixes. This supersedes earlier requirements for Audit field filters/export controls in the UI.

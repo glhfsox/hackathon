@@ -9,10 +9,10 @@ import { RANGES, type TimeRange } from './ranges'
 import TimeFilter from './components/TimeFilter'
 
 const PAGES = [
-  { id: 'overview', tab: '1:overview' },
-  { id: 'audit', tab: '2:audit' },
-  { id: 'policy', tab: '3:policy' },
-  { id: 'playground', tab: '4:playground' },
+  { id: 'overview', tab: 'Overview' },
+  { id: 'audit', tab: 'Audit' },
+  { id: 'policy', tab: 'Policy' },
+  { id: 'playground', tab: 'Playground' },
 ] as const
 type PageId = (typeof PAGES)[number]['id']
 
