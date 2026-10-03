@@ -10,6 +10,7 @@ For tests of the whole application:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from collections import deque
@@ -161,11 +162,36 @@ def wait_until(condition: Callable[[], bool], timeout_s: float = 5.0) -> None:
         time.sleep(0.1)
 
 
+@pytest.fixture(autouse=True)
+def _no_external_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never the real Jev, OpenAI or Langfuse, even with their keys in the developer's shell:
+    the judge is the (mocked) local fallback."""
+    for name in (
+        "TYPESAFE_API_KEY",
+        "OPENAI_API_KEY",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def policy_path(tmp_path: Path) -> Path:
-    """A temp copy of policy.yaml and its signature feed (a relative `source`), safe to edit."""
-    for name in ("policy.yaml", "signatures.yaml"):
-        shutil.copy2(BACKEND_DIR / name, tmp_path / name)
+    """A temp copy of policy.yaml and its signature feed (a relative `source`), safe to edit.
+
+    The shipped Jev fallback is OpenAI; the copy points it at the mocked local Ollama instead,
+    so no test can reach a hosted model.
+    """
+    shutil.copy2(BACKEND_DIR / "signatures.yaml", tmp_path / "signatures.yaml")
+    # A text edit, not a YAML round trip: tests edit the copy by its original lines.
+    text = (BACKEND_DIR / "policy.yaml").read_text()
+    text, count = re.subn(
+        r"(?m)^  fallback:\n(    .*\n)+",
+        f'  fallback:\n    model: gemma4\n    base_url: "{UPSTREAM_URL.rsplit("/", 2)[0]}"\n',
+        text,
+    )
+    assert count == 1, "policy.yaml has no jev.fallback block to point at the mock"
+    (tmp_path / "policy.yaml").write_text(text)
     return tmp_path / "policy.yaml"
 
 
@@ -184,12 +210,7 @@ def upstream() -> Iterator[FakeUpstream]:
 
 
 @pytest.fixture
-def gateway(
-    policy_path: Path, logs_dir: Path, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[TestClient]:
-    # Never the real Jev or Langfuse: the judge is the (mocked) local fallback.
-    for name in ("TYPESAFE_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-        monkeypatch.delenv(name, raising=False)
+def gateway(policy_path: Path, logs_dir: Path, upstream: FakeUpstream) -> Iterator[TestClient]:
     with TestClient(create_app(policy_path=policy_path, logs_dir=logs_dir)) as client:
         # Every request carries a developer's token unless a test sets its own header.
         client.headers.update(auth())

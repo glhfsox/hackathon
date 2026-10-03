@@ -97,8 +97,9 @@ def test_put_activates_and_writes_a_valid_policy(
     gateway: TestClient, upstream: FakeUpstream, policy_path: Path
 ) -> None:
     text = policy_path.read_text()
-    assert "    allowed_models: [gemma4]\n" in text
-    no_models = text.replace("    allowed_models: [gemma4]\n", "    allowed_models: []\n")
+    shipped = "    allowed_models: [gpt-4o-mini, gemma4]\n"
+    assert shipped in text
+    no_models = text.replace(shipped, "    allowed_models: []\n")
 
     resp = gateway.put("/api/policy", json={"yaml": no_models})
 

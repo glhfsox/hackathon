@@ -410,3 +410,88 @@ button:focus-visible, a:focus-visible, .split-handle:focus-visible {
 .workspace-flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; color: var(--accent); font-size: 11px; }
 .trace-empty { padding: 12px 0; }
 .trace-empty p { color: var(--fg-dim); margin: 8px 0 0; }
+
+/* Live: one card per agent step, its checks lighting up as the audit rows arrive. */
+.live {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+.live-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+}
+.live-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.live-turn {
+  border: 1px solid var(--line);
+  background: var(--bg-pane);
+  padding: 8px 10px;
+}
+.live-turn.live-block {
+  border-color: var(--accent);
+}
+.live-turn.live-running {
+  border-color: var(--fg-dim);
+}
+.live-turn-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.live-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.live-stage {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 4px 6px;
+}
+.live-model {
+  flex: 0.7;
+}
+.live-stage.live-blocked {
+  border-color: var(--accent);
+}
+.live-skipped {
+  opacity: 0.35;
+}
+.live-stage-title {
+  display: flex;
+  justify-content: space-between;
+  color: var(--fg-bright);
+  margin-bottom: 2px;
+}
+.live-arrow {
+  align-self: center;
+  color: var(--fg-dim);
+}
+.live-check {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-reason {
+  color: var(--accent);
+  white-space: normal;
+  font-size: 11px;
+  padding-left: 4px;
+}
+.live-timing {
+  margin-top: 4px;
+  font-size: 11px;
+}

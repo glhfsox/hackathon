@@ -1,5 +1,6 @@
 # The AI Control Layer, its dashboard and the test application, for judges and local demos.
-# Ollama runs on the host (see README.md). Quick start:
+# The models run at OpenAI (OPENAI_API_KEY in .env); Ollama on the host is optional, for gemma4.
+# Quick start:
 #   docker compose up -d --build          # backend on :8000, dashboard on :5173
 #   docker compose run --rm test-app --scenario all
 # JWT_SECRET defaults to a public demo value so `up` works with no setup. For anything beyond a
@@ -50,6 +51,7 @@ services:
         # The playground's token is minted from JWT_SECRET and baked into the bundle at build
         # time: rebuild after changing the secret.
         JWT_SECRET: *jwt-secret
+        VITE_PLAYGROUND_MODEL: ${PLAYGROUND_MODEL:-gpt-4o-mini}
     ports:
       - "127.0.0.1:5173:5173"
     depends_on: [backend]
@@ -64,6 +66,7 @@ services:
         required: false
     environment:
       TEST_APP_PROXY_URL: http://net:8000/v1
+      TEST_APP_MODEL: ${TEST_APP_MODEL:-gpt-4o-mini}
       JWT_SECRET: *jwt-secret
     volumes:
       - ./test_app/runs:/app/test_app/runs

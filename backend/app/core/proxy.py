@@ -126,6 +126,7 @@ class ProxyService:
                 self._adapter.to_upstream(forwarded, body),
                 base_url=model_cfg.upstream_base_url,
                 timeout_s=model_cfg.timeout_s,
+                api_key_env=model_cfg.api_key_env,
             )
             reply = self._adapter.reply_to_canonical(upstream_response)
             usage = self._adapter.reply_usage(upstream_response)

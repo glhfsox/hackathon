@@ -827,3 +827,41 @@ async def test_live_ollama_fallback_judges_injection(monkeypatch):
     print(f"\nlive fallback verdict: {verdict.model_dump()}")
     assert verdict.decided_by == "fallback"
     assert 0.0 <= verdict.score <= 1.0 and verdict.reason
+
+
+# --- a hosted fallback (OpenAI) needs its own key --------------------------------------------
+
+FB_KEY_ENV = "TEST_JEV_FALLBACK_KEY"
+
+
+async def test_fallback_sends_its_key(no_key, http, mock, monkeypatch):
+    monkeypatch.setenv(FB_KEY_ENV, "sk-fallback")
+    fb = mock.post(FB_URL).mock(return_value=_fb_ok())
+
+    verdict = await JevClient(_cfg(api_key_env=FB_KEY_ENV), http).judge(_inp())
+
+    assert verdict.decided_by == "fallback"
+    assert fb.calls.last.request.headers["authorization"] == "Bearer sk-fallback"
+
+
+async def test_fallback_with_empty_key_env_fails_closed(no_key, http, mock, monkeypatch):
+    monkeypatch.delenv(FB_KEY_ENV, raising=False)
+    fb = mock.post(FB_URL).mock(return_value=_fb_ok())
+
+    with pytest.raises(JudgeUnavailable, match=FB_KEY_ENV):
+        await JevClient(_cfg(api_key_env=FB_KEY_ENV), http).judge(_inp())
+
+    assert not fb.called
+
+
+async def test_health_probes_the_fallback_with_its_key(no_key, http, mock, monkeypatch):
+    models = mock.get(f"{FB_BASE}/models").mock(return_value=httpx.Response(200, json={}))
+    client = JevClient(_cfg(api_key_env=FB_KEY_ENV), http)
+
+    monkeypatch.delenv(FB_KEY_ENV, raising=False)
+    assert (await client.health())["fallback"] == "down"
+    assert not models.called
+
+    monkeypatch.setenv(FB_KEY_ENV, "sk-fallback")
+    assert (await client.health())["fallback"] == "up"
+    assert models.calls.last.request.headers["authorization"] == "Bearer sk-fallback"

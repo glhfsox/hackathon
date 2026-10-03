@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.openai import OpenAIAdapter
-from app.api import audit, chat, health, metrics, policy
+from app.api import audit, chat, events, health, metrics, policy
 from app.api.errors import agent_validation_handler
 from app.core.audit_reader import JsonlAuditReader
 from app.core.auth import JwtAuthenticator, secret_from_env
@@ -132,6 +132,7 @@ def create_app(
     app.include_router(policy.router)
     app.include_router(audit.router)
     app.include_router(metrics.router)
+    app.include_router(events.router)
     return app
 
 

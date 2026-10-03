@@ -109,6 +109,7 @@ EXTRA_KEYS = {
     "policy_versions",
     "agents",
     "economics",
+    "request_latency_ms",
 }
 ZERO = {"p50": 0.0, "p95": 0.0}
 
@@ -147,6 +148,7 @@ def test_empty_input():
         assert m[key] == {}, key
     for key in ("overhead_ms", "rules_overhead_ms", "jev_latency_ms"):
         assert m[key] == ZERO, key
+    assert all(v == ZERO for v in m["request_latency_ms"].values())
     assert m["timeline"] == [] and m["top_block_reasons"] == []
     assert m["tokens_total"] == 0 and m["cost_total"] == 0.0
     assert m["decided_by"] == {"rules": 0, "jev": 0, "fallback": 0}
@@ -373,7 +375,8 @@ def test_turn_summary_rows_leave_the_check_stats_unchanged():
     ]  # fmt: skip
     base = compute_metrics(_dataset(), _policy(), now=NOW)
     both = compute_metrics(_dataset() + turns, _policy(), now=NOW)
-    for key in set(base) - {"system_events", "policy_versions", "agents", "economics"}:
+    turn_keys = {"system_events", "policy_versions", "agents", "economics", "request_latency_ms"}
+    for key in set(base) - turn_keys:
         assert both[key] == base[key], key
     assert both["system_events"] == {**base["system_events"], "turn_summary": 8}
     assert both["blocks_by_check"] == {"permissions": 1}
@@ -510,3 +513,19 @@ def test_agents_and_economics_follow_since():
     assert (m["agents"]["anonymous"]["turns"], m["agents"]["anonymous"]["sessions"]) == (2, 2)
     assert m["economics"]["cost_by_day"] == {"2026-10-03": 0.25}
     assert m["economics"]["blocked_before_upstream"] == 1
+
+
+def test_request_latency_splits_checks_model_and_total():
+    # Per turn: checks before the model (input/tool_result), the model, checks after it
+    # (tool_call/output). t4 was blocked before the model: only its pre-checks count, and its
+    # total is what the agent waited.
+    m = compute_metrics(_agent_dataset(), _agent_policy(), now=NOW)
+
+    assert m["request_latency_ms"] == {
+        "pre_checks": {"p50": 2.0, "p95": 4.0},  # 2, 3, 2, 4, 1
+        "upstream": {"p50": 90.0, "p95": 200.0},  # 100, 200, 90, 48
+        "post_checks": {"p50": 1.0, "p95": 1.0},
+        "total": {"p50": 93.0, "p95": 204.0},  # 103, 204, 93, 4, 50
+        # Replies are not streamed: the agent's first token arrives with the whole answer.
+        "ttft": {"p50": 93.0, "p95": 204.0},
+    }

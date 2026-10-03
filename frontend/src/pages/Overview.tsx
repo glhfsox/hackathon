@@ -101,7 +101,7 @@ export default function Overview({ range }: { range: TimeRange }) {
                 checks enforcing
               </div>
               <div>{modes.on}/{modes.total} checks on</div>
-              <div>profile {m.active_profile}</div>
+              <div>jev threshold {m.jev_threshold}</div>
               {health.data && (
                 <div className={health.data.jev === 'up' ? '' : 'accent'}>
                   jev remote {health.data.jev}
@@ -212,6 +212,31 @@ export default function Overview({ range }: { range: TimeRange }) {
         </Pane>
         <div className="col" style={{ width: 380 }}>
           <Pane title="Latency · p50 / p95 (ms)" className="grow">
+            {(
+              [
+                ['checks before', m.request_latency_ms.pre_checks],
+                ['model', m.request_latency_ms.upstream],
+                ['checks after', m.request_latency_ms.post_checks],
+                ['TTFT (step)', m.request_latency_ms.ttft],
+              ] as const
+            ).map(([label, p]) => (
+              <div key={label} style={{ display: 'flex', gap: 8 }}>
+                <span className={label === 'TTFT (step)' ? 'bright bold' : 'dim'} style={{ width: 120 }}>
+                  {label}
+                </span>
+                <TextBar
+                  value={p.p95 / Math.max(1, m.request_latency_ms.total.p95)}
+                  width={10}
+                  className={label === 'model' ? 'dim' : 'accent'}
+                />
+                <span>
+                  {p.p50.toFixed(0)}/{p.p95.toFixed(0)}
+                </span>
+              </div>
+            ))}
+            <div className="dim" style={{ margin: '6px 0 2px' }}>
+              per check
+            </div>
             {latency.map(([check, p]) => (
               <div key={check} style={{ display: 'flex', gap: 8 }}>
                 <span className="dim" style={{ width: 120 }}>

@@ -9,6 +9,8 @@ COPY frontend/ ./
 # The playground sends VITE_PLAYGROUND_API_KEY as its Bearer token, so it gets a JWT (HS256,
 # role developer, valid 30 days) signed here with the layer's JWT_SECRET.
 ARG JWT_SECRET
+ARG VITE_PLAYGROUND_MODEL=gpt-4o-mini
+ENV VITE_PLAYGROUND_MODEL=$VITE_PLAYGROUND_MODEL
 RUN VITE_PLAYGROUND_API_KEY=$(node -e ' \
       const c = require("crypto"); \
       const b = (o) => Buffer.from(JSON.stringify(o)).toString("base64url"); \

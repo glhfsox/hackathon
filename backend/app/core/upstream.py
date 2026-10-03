@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 import httpx
@@ -15,11 +16,22 @@ class HttpUpstream:
         self._http = http
 
     async def chat(
-        self, payload: dict[str, Any], *, base_url: str, timeout_s: float
+        self,
+        payload: dict[str, Any],
+        *,
+        base_url: str,
+        timeout_s: float,
+        api_key_env: str | None = None,
     ) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {}
+        if api_key_env is not None:
+            # The message names the variable only; the key itself is never logged.
+            if not (key := os.environ.get(api_key_env)):
+                raise UpstreamError(f"env {api_key_env} is empty")
+            headers["Authorization"] = f"Bearer {key}"
         try:
-            response = await self._http.post(url, json=payload, timeout=timeout_s)
+            response = await self._http.post(url, json=payload, headers=headers, timeout=timeout_s)
             response.raise_for_status()
             body = response.json()
         # ValueError: the body is not JSON. Neither message quotes the body, which may carry PII;

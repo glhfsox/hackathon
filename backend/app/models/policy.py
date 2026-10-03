@@ -165,6 +165,8 @@ class ModelConfig(_Strict):
     price_per_1k_tokens: float = 0.0
     # Seconds to wait for the upstream reply; a local model can take tens of seconds.
     timeout_s: float = Field(default=120.0, gt=0)
+    # NAME of the env var holding the upstream's API key (a hosted model); None sends no key.
+    api_key_env: str | None = None
 
 
 class CheckSection(BaseModel):
@@ -189,6 +191,8 @@ class JevFallback(_Strict):
     model: str
     base_url: str
     timeout_s: float = 30.0
+    # NAME of the env var holding the fallback's API key (a hosted model); None sends no key.
+    api_key_env: str | None = None
 
 
 class JevConfig(_Strict):

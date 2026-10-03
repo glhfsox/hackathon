@@ -144,7 +144,7 @@ export interface BlockReason {
 
 // The contract fields plus the additive ones the backend sends (app/core/metrics.py).
 export interface Metrics {
-  active_profile: string
+  jev_threshold: number
   totals: Totals
   blocks_by_check: Record<string, number>
   latency_ms_by_check: Record<string, Percentiles>
@@ -156,6 +156,8 @@ export interface Metrics {
   tokens_total: number
   cost_total: number
   system_events: Record<string, number>
+  // Where an agent step's time goes; ttft equals total because replies are not streamed.
+  request_latency_ms: Record<'pre_checks' | 'upstream' | 'post_checks' | 'total' | 'ttft', Percentiles>
 }
 
 export interface ChatMessage {

@@ -377,12 +377,13 @@ def test_policy_hot_edit_changes_the_outcome_without_restart(
     gateway: TestClient, upstream: FakeUpstream, policy_path: Path
 ) -> None:
     text = policy_path.read_text()
-    assert re.search(r"(?m)^    allowed_models: \[gemma4\]$", text), "test assumes the shipped list"
+    shipped = "allowed_models: [gpt-4o-mini, gemma4]"
+    assert re.search(rf"(?m)^    {re.escape(shipped)}$", text), "test assumes the shipped list"
     upstream.script(completion("4"))
 
     before = _chat(gateway, USER).json()
     version = gateway.get("/api/health").json()["policy_version"]
-    policy_path.write_text(text.replace("allowed_models: [gemma4]", "allowed_models: []"))
+    policy_path.write_text(text.replace(shipped, "allowed_models: []"))
     wait_until(lambda: gateway.get("/api/health").json()["policy_version"] != version)
     after = _chat(gateway, USER).json()
 
