@@ -1,5 +1,3 @@
-from app.models.audit_filter import AuditFilter
-from app.models.audit_record import AuditRecord
 from app.models.canonical_request import CanonicalRequest
 from app.models.check_result import CheckResult
 from app.models.decision import Decision
@@ -13,8 +11,6 @@ from app.models.tool_def import ToolDef
 
 __all__ = [
     "Action",
-    "AuditFilter",
-    "AuditRecord",
     "CanonicalRequest",
     "CheckResult",
     "Checkpoint",
