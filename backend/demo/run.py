@@ -5,9 +5,9 @@
     uv run python -m demo.run --all
     uv run python -m demo.run --all --base-url http://localhost:8000/v1   # an external proxy
 
-Without --base-url it starts the demo gateway stand-in (demo/gateway.py) in-process, on a temp
-copy of policy.yaml and its signature feed: scenarios that edit the policy edit that copy, never
-the real file. Callers whose API-key env var is unset get a random key for this run.
+Without --base-url it starts the control layer (app.main.create_app) in-process under uvicorn,
+on a temp copy of policy.yaml and its signature feed: scenarios that edit the policy edit that
+copy, never the real file. Callers whose API-key env var is unset get a random key for this run.
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ import uvicorn
 import yaml
 
 from app.core.policy_store import parse_policy
+from app.main import create_app
 from app.models.policy import Policy
 from demo import tools
 from demo.agent import AgentEvent, AgentResult
 from demo.agents import DEFAULT_MODEL, run_orchestrator, run_worker
-from demo.gateway import create_app
 
 log = logging.getLogger(__name__)
 
@@ -76,12 +76,12 @@ class SkipScenario(Exception):
     """The scenario cannot run in this setup (e.g. it edits the policy of an external proxy)."""
 
 
-# --- the in-process gateway ----------------------------------------------------------------
+# --- the in-process control layer ----------------------------------------------------------------
 
 
 @dataclass
 class LocalGateway:
-    """The stand-in gateway, served by uvicorn in a background thread."""
+    """The control layer (app.main), served by uvicorn in a background thread."""
 
     base_url: str
     policy_path: Path  # the temp copy scenarios may edit
@@ -94,17 +94,20 @@ class LocalGateway:
 
 
 def start_gateway(policy_path: Path, logs_dir: Path, port: int = 0) -> LocalGateway:
-    """Serve create_app(policy_path, logs_dir) on 127.0.0.1:`port` (0: a free port)."""
+    """Serve the real app on `policy_path` and `logs_dir` at 127.0.0.1:`port` (0: a free port)."""
     config = uvicorn.Config(
-        create_app(policy_path, logs_dir), host="127.0.0.1", port=port, log_level="warning"
+        create_app(policy_path=policy_path, logs_dir=logs_dir),
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, name="demo-gateway", daemon=True)
+    thread = threading.Thread(target=server.run, name="control-layer", daemon=True)
     thread.start()
     deadline = time.monotonic() + 30
     while not server.started:
         if not thread.is_alive() or time.monotonic() > deadline:
-            raise RuntimeError("the demo gateway did not start; see the log above")
+            raise RuntimeError("the control layer did not start; see the log above")
         time.sleep(0.05)
     bound = server.servers[0].sockets[0].getsockname()[1]
     return LocalGateway(f"http://127.0.0.1:{bound}/v1", policy_path, server, thread)
@@ -428,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             stack.callback(gateway.stop)
             demo = Demo(gateway.base_url, args.model, gateway)
             day = datetime.now(UTC).date().isoformat()
-            print(f"control layer: demo gateway stand-in on {gateway.base_url}")
+            print(f"control layer: in-process on {gateway.base_url}")
             print(f"policy: temp copy {policy_copy}")
             print(f"audit log: {args.logs.resolve() / f'audit-{day}.jsonl'}")
         print(f"workspace: {tools.WORKSPACE}")

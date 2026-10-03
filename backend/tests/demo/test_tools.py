@@ -17,7 +17,8 @@ from app.checks.base import CheckContext
 from app.core.pipeline import apply_redactions
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 from demo import tools
-from tests.demo.conftest import DEMO_KEY, FakeUpstream, bridged_client
+from tests.conftest import DEMO_KEY, FakeUpstream
+from tests.demo.conftest import bridged_client
 
 PII_FIELDS = ("email", "phone", "ssn", "pesel", "iban", "card")
 

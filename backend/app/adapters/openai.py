@@ -1,13 +1,21 @@
 import json
+import time
 from typing import Any
 
 from pydantic import ValidationError
 
-from app.models import CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef
+from app.models import CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef, Usage
 from app.protocols.adapter import InvalidRequestError
 from app.schemas.chat_completion_request import ChatCompletionRequest
 from app.schemas.chat_completion_response import ChatCompletionResponse
 from app.schemas.control_trace import ControlTrace
+
+
+def _describe(exc: ValidationError) -> str:
+    """Field paths and messages only: str(exc) would quote the input, which may be PII."""
+    return "; ".join(
+        f"{'.'.join(map(str, e['loc'])) or '(root)'}: {e['msg']}" for e in exc.errors()
+    )
 
 
 def _content_text(raw: Any) -> str | None:
@@ -37,7 +45,7 @@ def _parse_tool_call(raw: dict[str, Any]) -> ToolCall:
     try:
         return ToolCall(id=raw.get("id", ""), name=function.get("name", ""), arguments=arguments)
     except ValidationError as exc:
-        raise InvalidRequestError(f"invalid tool call: {exc}") from exc
+        raise InvalidRequestError(f"invalid tool call: {_describe(exc)}") from exc
 
 
 def _parse_message(raw: dict[str, Any]) -> Message:
@@ -52,7 +60,7 @@ def _parse_message(raw: dict[str, Any]) -> Message:
             tool_call_id=raw.get("tool_call_id"),
         )
     except ValidationError as exc:
-        raise InvalidRequestError(f"invalid message: {exc}") from exc
+        raise InvalidRequestError(f"invalid message: {_describe(exc)}") from exc
 
 
 def _parse_tool_def(raw: dict[str, Any]) -> ToolDef:
@@ -66,7 +74,7 @@ def _parse_tool_def(raw: dict[str, Any]) -> ToolDef:
             parameters=function.get("parameters") or {},
         )
     except ValidationError as exc:
-        raise InvalidRequestError(f"invalid tool definition: {exc}") from exc
+        raise InvalidRequestError(f"invalid tool definition: {_describe(exc)}") from exc
 
 
 def _first_choice(upstream_response: dict[str, Any]) -> dict[str, Any]:
@@ -106,45 +114,90 @@ class OpenAIAdapter:
             messages.append(out)
         payload["messages"] = messages
         payload["stream"] = False  # streaming is accepted but always answered whole
+        payload.pop("stream_options", None)  # only valid together with stream: true
         return payload
 
     def reply_to_canonical(self, upstream_response: dict[str, Any]) -> Message:
         message = _first_choice(upstream_response).get("message")
         if not isinstance(message, dict):
             raise InvalidRequestError("upstream choice has no message")
-        return _parse_message(message)
+        # The role is validated, then normalised: the reply is the assistant's whatever it says.
+        return _parse_message(message).model_copy(update={"role": "assistant"})
+
+    def reply_usage(self, upstream_response: dict[str, Any]) -> Usage:
+        raw = upstream_response.get("usage")
+        if raw is None:
+            return Usage()
+        if not isinstance(raw, dict):
+            raise InvalidRequestError("upstream usage is not an object")
+        keys = ("prompt_tokens", "completion_tokens")
+        try:
+            return Usage.model_validate({k: raw[k] for k in keys if k in raw})
+        except ValidationError as exc:
+            raise InvalidRequestError(f"invalid upstream usage: {_describe(exc)}") from exc
 
     def to_response(
-        self, upstream_response: dict[str, Any], reply: Message, trace: ControlTrace
+        self,
+        upstream_response: dict[str, Any],
+        reply: Message,
+        trace: ControlTrace,
+        *,
+        model: str,
+        usage: Usage,
     ) -> ChatCompletionResponse:
-        choices = [dict(choice) for choice in upstream_response["choices"]]
-        message = dict(_first_choice(upstream_response)["message"])
-        if reply.content != _content_text(message.get("content")):
-            message["content"] = reply.content
-        choices[0]["message"] = message
-        try:
-            return ChatCompletionResponse.model_validate(
-                {**upstream_response, "choices": choices, "control": trace}
-            )
-        except ValidationError as exc:
-            raise InvalidRequestError(f"invalid upstream response: {exc}") from exc
+        # Only what the checks inspected goes back: other choices and vendor extras such as
+        # Ollama's `reasoning` were never checked, so they are dropped.
+        message: dict[str, Any] = {"role": "assistant", "content": reply.content}
+        if reply.tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                }
+                for call in reply.tool_calls
+            ]
+        finish = _first_choice(upstream_response).get("finish_reason")
+        if not isinstance(finish, str):
+            finish = "tool_calls" if reply.tool_calls else "stop"
+        upstream_id = upstream_response.get("id")
+        created = upstream_response.get("created")
+        return ChatCompletionResponse.model_validate(
+            {
+                "id": upstream_id if isinstance(upstream_id, str) else f"ctl-{trace.request_id}",
+                "object": "chat.completion",
+                "created": created if isinstance(created, int) else int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "finish_reason": finish, "message": message}],
+                "usage": {
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.prompt_tokens + usage.completion_tokens,
+                },
+                "control": trace,
+            }
+        )
 
     def refusal(
         self, model: str, trace: ControlTrace, blocked_by: str, reason: str
     ) -> ChatCompletionResponse:
-        return ChatCompletionResponse(
-            id=f"ctl-{trace.request_id}",
-            model=model,
-            choices=[
-                {
-                    "index": 0,
-                    "finish_reason": "stop",
-                    "message": {
-                        "role": "assistant",
-                        "content": f"Blocked by {blocked_by}: {reason}",
-                    },
-                }
-            ],
-            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            control=trace,
+        return ChatCompletionResponse.model_validate(
+            {
+                "id": f"ctl-{trace.request_id}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": f"Blocked by {blocked_by}: {reason}",
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "control": trace,
+            }
         )

@@ -1,6 +1,6 @@
 from typing import Any, Protocol
 
-from app.models import CanonicalRequest, Message
+from app.models import CanonicalRequest, Message, Usage
 from app.schemas.chat_completion_request import ChatCompletionRequest
 from app.schemas.chat_completion_response import ChatCompletionResponse
 from app.schemas.control_trace import ControlTrace
@@ -36,10 +36,23 @@ class ProviderAdapter(Protocol):
         """Extract the model's reply from the upstream response. Raises InvalidRequestError."""
         ...
 
+    def reply_usage(self, upstream_response: dict[str, Any]) -> Usage:
+        """Token usage of the upstream call (no latency). Raises InvalidRequestError."""
+        ...
+
     def to_response(
-        self, upstream_response: dict[str, Any], reply: Message, trace: ControlTrace
+        self,
+        upstream_response: dict[str, Any],
+        reply: Message,
+        trace: ControlTrace,
+        *,
+        model: str,
+        usage: Usage,
     ) -> ChatCompletionResponse:
-        """The upstream response with `reply` (possibly redacted) put back and `control` added."""
+        """A response built from the checked `reply` (possibly redacted) with `control` added.
+
+        Upstream fields no check saw (other choices, vendor extras) are not passed on.
+        """
         ...
 
     def refusal(

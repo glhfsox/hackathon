@@ -55,10 +55,13 @@ profiles:
 # MODELS callers may request. The key is the `model` name in the request.
 #   upstream_base_url    any OpenAI-compatible endpoint the request is forwarded to
 #   price_per_1k_tokens  used for cost estimates and cost budgets (local models cost 0)
+#   timeout_s            seconds to wait for the upstream reply (default 120); after it the
+#                        agent gets a refusal `upstream_unavailable`
 models:
   gemma4:
     upstream_base_url: "http://localhost:11434/v1"
     price_per_1k_tokens: 0.0
+    timeout_s: 120
 
 # CALLERS: who may use the layer. The key is the caller id shown in the audit log.
 #   api_key_env     NAME of the env var holding this caller's API key (Bearer token). An unset or

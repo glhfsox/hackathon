@@ -111,6 +111,7 @@ def targets(request: CanonicalRequest, *, scope: str = "new") -> list[tuple[int,
     for i in range(len(msgs) - 1, -1, -1):
         if msgs[i].role != "tool":
             break
-        if msgs[i].content:
-            trailing.append((i, msgs[i].content))
+        content = msgs[i].content
+        if content:
+            trailing.append((i, content))
     return list(reversed(trailing))

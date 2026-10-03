@@ -8,8 +8,7 @@ control layer through two settings only, the client's `base_url` and `api_key`.
 | `agent.py` | The tool-calling loop. A refusal (`Blocked by <check>: <reason>`) is the final answer, and no tool call from a blocked reply runs. The decision trace is read from the response's `control` field (`completion.model_extra["control"]`). |
 | `agents.py` | `worker` (caller `demo`: `query_customers`, `run_shell`, `read_file`, `http_get`) and `orchestrator` (caller `orchestrator`: only `delegate(task)`, which runs the worker). Agent-to-agent traffic is a tool call, so it passes `tool_call` and `tool_result` like any other. |
 | `tools.py` | The tools: a fake customer DB with checksum-valid fake PII, a real shell in a scratch workspace, file reads restricted to that workspace, and an HTTP GET restricted to `127.0.0.1`/`localhost`. `guarded()` asks `POST /v1/tools/check` before every call and refuses unless it is allowed (also when the guard cannot be reached). |
-| `gateway.py` | **Demo stand-in** for the real proxy, which a teammate is writing. It implements `/v1/chat/completions` and `/v1/tools/check` exactly as in `contracts/http-api.md`, plus `GET /api/health` and `GET /api/metrics`. The decisions come from the real pipeline, policy store, Jev client and audit sinks. |
-| `run.py` | The scenario runner. |
+| `run.py` | The scenario runner. It starts the real control layer (`app.main.create_app`) in-process under uvicorn. |
 
 ## Run it
 
@@ -21,7 +20,7 @@ uv run python -m demo.run --scenario pii      # one scenario
 uv run python -m demo.run --all               # all of them, about 8 minutes on a laptop
 ```
 
-No setup is needed. The runner starts the stand-in gateway in-process on a free port (`--port 8000`
+No setup is needed. The runner starts the control layer in-process on a free port (`--port 8000`
 to fix it) on a **temp copy** of `policy.yaml` and `signatures.yaml`. Scenarios that edit the policy
 edit that copy and never touch the real file. Callers whose API-key env var is unset get a random
 key for the run, and keys are never printed. For every step the runner prints the decision at each
@@ -53,7 +52,7 @@ and then ask the agent to delete things. In the same way, `http_get` accepts any
 
 ## Logs
 
-The stand-in writes the audit log in the Power BI format described in
+The control layer writes the audit log in the Power BI format described in
 [`backend/docs/observability.md`](../docs/observability.md), to `backend/logs/` (`--logs DIR` to
 change it):
 
@@ -65,15 +64,16 @@ change it):
 
 Langfuse traces are added when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
 
-## Point the agents at the real proxy
+## Point the agents at a running server
 
 ```bash
-export DEMO_API_KEY=... ORCHESTRATOR_API_KEY=...    # keys the proxy's policy knows
+uv run uvicorn app.main:app --port 8000          # in another shell, with the same keys exported
+export DEMO_API_KEY=... ORCHESTRATOR_API_KEY=...    # keys the server's policy knows
 uv run python -m demo.run --all --base-url http://localhost:8000/v1
 ```
 
 Nothing else changes: the agents and the tool guard use that base URL and those keys. `budget` and
-`policy_edit` are skipped, because they edit the in-process gateway's policy file.
+`policy_edit` are skipped, because they edit the in-process server's temp policy copy.
 
 ## Tests
 

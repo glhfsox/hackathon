@@ -12,4 +12,12 @@ class Upstream(Protocol):
     Implementations raise UpstreamError, so the caller can answer `upstream_unavailable`.
     """
 
-    async def chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+    async def chat(
+        self, payload: dict[str, Any], *, base_url: str, timeout_s: float
+    ) -> dict[str, Any]:
+        """POST the payload to `<base_url>/chat/completions`.
+
+        The caller passes the model's `upstream_base_url` and `timeout_s` from the policy
+        snapshot its request took, so the upstream never looks the policy up a second time.
+        """
+        ...

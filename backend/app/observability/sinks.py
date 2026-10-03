@@ -107,7 +107,7 @@ def _last_id(directory: Path) -> int:
                 # A torn last line, or the first line of the tail cut in half: look further up.
                 continue
             if isinstance(row, dict) and isinstance(row.get("id"), int):
-                return row["id"]
+                return int(row["id"])
     return 0
 
 
