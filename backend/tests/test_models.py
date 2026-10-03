@@ -1,5 +1,5 @@
 from app.models import Checkpoint, Message, ToolCall
-from app.models.policy import CheckSection, Mode
+from app.models.policy import CheckSection
 
 
 def test_tool_call_parses():
@@ -7,11 +7,10 @@ def test_tool_call_parses():
     assert m.tool_calls[0].arguments == {"a": 1}
 
 
-def test_check_config_splits_modes_and_params():
-    c = CheckSection.model_validate({"input": "block", "tool_call": "monitor", "max_calls": 5})
-    assert c.mode(Checkpoint.INPUT) == Mode.BLOCK
-    assert c.mode(Checkpoint.OUTPUT) == Mode.OFF
-    assert c.params == {"max_calls": 5}
+def test_check_section_is_params_only():
+    assert CheckSection.model_validate({"max_calls": 5}).params == {"max_calls": 5}
+    # A bare `tool_args:` in YAML is None: the check is on with its defaults.
+    assert CheckSection.model_validate(None).params == {}
 
 
 def _policy(**over):
@@ -19,24 +18,20 @@ def _policy(**over):
 
     base = {
         "version": "t",
-        "active_profile": "balanced",
-        "profiles": {
-            "balanced": {"jev_threshold": 0.6},
-            "strict": {"jev_threshold": 0.4, "checks": {"pii_secrets": {"tool_result": "block"}}},
-        },
+        "jev_threshold": 0.6,
         "models": {"m": {"upstream_base_url": "http://x/v1"}},
-        "checks": {"pii_secrets": {"tool_result": "redact", "types": ["email"]}},
+        "checks": {"pii_secrets": {"types": ["email"]}},
         "jev": {"fallback": {"model": "m", "base_url": "http://x/v1"}},
     }
     base.update(over)
     return Policy.model_validate(base)
 
 
-def test_profile_overrides_check_mode():
-    assert _policy().mode("pii_secrets", Checkpoint.TOOL_RESULT) == Mode.REDACT
-    strict = _policy(active_profile="strict")
-    assert strict.mode("pii_secrets", Checkpoint.TOOL_RESULT) == Mode.BLOCK
-    assert strict.check_config("pii_secrets").params == {"types": ["email"]}
+def test_a_check_is_on_when_its_section_exists():
+    policy = _policy()
+    assert policy.enabled("pii_secrets") and not policy.enabled("tool_args")
+    assert policy.check_config("pii_secrets").params == {"types": ["email"]}
+    assert policy.check_config("tool_args").params == {}
 
 
 def test_targets_new_vs_all():

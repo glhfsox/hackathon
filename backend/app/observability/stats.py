@@ -56,7 +56,7 @@ def history_row(metrics: dict[str, Any], generated_at: str) -> dict[str, Any]:
     """The flat top-level numbers of one metrics body, one column each."""
     return {
         "ts": generated_at,
-        "active_profile": metrics["active_profile"],
+        "jev_threshold": metrics["jev_threshold"],
         **metrics["totals"],
         "tokens_total": metrics["tokens_total"],
         "cost_total": metrics["cost_total"],

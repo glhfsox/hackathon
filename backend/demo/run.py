@@ -313,21 +313,21 @@ def scenario_budget(demo: Demo) -> None:
 
 
 def scenario_policy_edit(demo: Demo) -> None:
-    prompt = (
-        "Write a one-sentence welcome message for our new customer; "
-        "her email is anna.kowalska@example.com."
-    )
+    prompt = "List the files in the workspace with run_shell and tell me what is there."
     if demo.gateway is None:
         raise SkipScenario("it edits the policy file, so it needs the in-process gateway")
-    profile = yaml.safe_load(demo.gateway.policy_path.read_text(encoding="utf-8"))
-    print(f"active profile: {profile['active_profile']}")
     demo.worker(prompt)
 
-    def strict(text: str) -> str:
-        return re.sub(r"(?m)^active_profile:.*$", "active_profile: strict", text, count=1)
+    def no_shell(text: str) -> str:
+        raw = yaml.safe_load(text)
+        tools_allowed = raw["checks"]["permissions"]["allowed_tools"]
+        raw["checks"]["permissions"]["allowed_tools"] = [
+            t for t in tools_allowed if t != "run_shell"
+        ]
+        return yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
 
-    print("\npolicy edit: active_profile: strict (the same request again)")
-    with demo.edited_policy(strict):
+    print("\npolicy edit: remove run_shell from checks.permissions.allowed_tools (same request)")
+    with demo.edited_policy(no_shell):
         demo.worker(prompt)
 
 
@@ -345,7 +345,7 @@ SCENARIOS: dict[str, tuple[str, Callable[[Demo], None]]] = {
     ),
     "budget": ("a tiny token budget stops the agent mid-session", scenario_budget),
     "policy_edit": (
-        "switching active_profile to strict changes the outcome without a restart",
+        "removing run_shell from allowed_tools blocks it without a restart",
         scenario_policy_edit,
     ),
 }

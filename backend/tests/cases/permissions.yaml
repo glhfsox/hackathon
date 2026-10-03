@@ -9,13 +9,6 @@
   messages: [{role: user, content: "How many customers signed up last week?"}]
   expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
 
-- name: disallowed model only flagged in monitor mode
-  checkpoint: input
-  model: gpt-4o
-  messages: [{role: user, content: "How many customers signed up last week?"}]
-  policy_patch: {checks: {permissions: {input: monitor}}}
-  expect: {action: flag, check: permissions, reason_contains: "gpt-4o"}
-
 - name: tool in allowed_tools
   checkpoint: tool_call
   policy_patch: {checks: {permissions: {allowed_tools: [query_customers]}}}

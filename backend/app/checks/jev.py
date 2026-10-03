@@ -51,7 +51,9 @@ def _key(inp: JudgeInput) -> tuple[str, str, str]:
 class JevCheck:
     id = "jev"
     cost_rank = 7
-    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT})
+    checkpoints = frozenset(
+        {Checkpoint.INPUT, Checkpoint.TOOL_CALL, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
+    )
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext
@@ -92,10 +94,14 @@ class JevCheck:
         for index, text in texts:
             role = "assistant" if index == REPLY_INDEX else request.messages[index].role
             context = f"message role: {role}; offered tools: {tools}"
+            # At tool_call the text is the tool-call view (task, reasoning, calls), not a message.
+            captured = (
+                Checkpoint.TOOL_CALL
+                if index == REPLY_INDEX and request.checkpoint == Checkpoint.TOOL_CALL
+                else _CAPTURED_AT[role]
+            )
             inputs += [
-                JudgeInput(
-                    checkpoint=_CAPTURED_AT[role], text=text[i : i + max_chars], context=context
-                )
+                JudgeInput(checkpoint=captured, text=text[i : i + max_chars], context=context)
                 for i in range(0, len(text), max_chars)
             ]
         # A repeated chunk (two identical tool results, say) is judged once.

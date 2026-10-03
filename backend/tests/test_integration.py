@@ -1,7 +1,7 @@
 """The real policy file, the production check registry and the real checks, wired together.
 
 Unit tests elsewhere use fake checks or one check at a time; these catch what only shows up when
-the pieces meet: the registry the proxy uses, profile switches and what actually reaches Jev.
+the pieces meet: the registry the proxy uses and what actually reaches Jev.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from app.core.budget import UsageLedger
 from app.core.pipeline import run_checkpoint
 from app.core.policy_store import parse_policy
 from app.core.signatures import load_signatures
-from app.models import Action, CanonicalRequest, Checkpoint, Message, Mode, ToolCall, ToolDef
+from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef
 from app.models.policy import CHECK_SPECS, Policy
 from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
@@ -30,10 +30,8 @@ RAW_CARD = "4111 1111 1111 1111"
 SENSITIVE = f"my ssn: {RAW_SSN}, card {RAW_CARD}"
 
 
-def _policy(profile: str) -> Policy:
-    raw = yaml.safe_load(POLICY_FILE.read_text())
-    raw["active_profile"] = profile
-    return parse_policy(yaml.safe_dump(raw))
+def _policy() -> Policy:
+    return parse_policy(POLICY_FILE.read_text())
 
 
 def _signatures(policy: Policy) -> Any:
@@ -67,7 +65,7 @@ EXPECTED_RUN = {
         "pii_secrets",
         "jev",
     ],
-    Checkpoint.TOOL_CALL: ["permissions", "signatures", "tool_args"],
+    Checkpoint.TOOL_CALL: ["permissions", "signatures", "tool_args", "pii_secrets", "jev"],
     Checkpoint.TOOL_RESULT: [
         "permissions",
         "budget",
@@ -96,7 +94,7 @@ def _request(checkpoint: Checkpoint, messages: list[Message], reply: Message | N
 
 
 async def test_production_registry_runs_every_check_in_cost_order() -> None:
-    policy = _policy("balanced")
+    policy = _policy()
     signatures = _signatures(policy)
     ran: set[str] = set()
 
@@ -122,7 +120,7 @@ async def test_production_registry_runs_every_check_in_cost_order() -> None:
     assert ranks == sorted(ranks) and len(set(ranks)) == 7
 
 
-# --- (b) raw PII never reaches Jev, in any profile ---------------------------------------------
+# --- (b) raw PII never reaches Jev ----------------------------------------------------------
 
 PII_REQUESTS = {
     Checkpoint.INPUT: ([Message(role="user", content=SENSITIVE)], None),
@@ -149,9 +147,8 @@ def _all_text(request: CanonicalRequest) -> str:
 
 
 @pytest.mark.parametrize("checkpoint", list(PII_REQUESTS), ids=lambda c: c.value)
-@pytest.mark.parametrize("profile", ["balanced", "strict", "permissive"])
-async def test_raw_pii_never_reaches_the_judge(profile: str, checkpoint: Checkpoint) -> None:
-    policy = _policy(profile)
+async def test_raw_pii_never_reaches_the_judge(checkpoint: Checkpoint) -> None:
+    policy = _policy()
     messages, reply = PII_REQUESTS[checkpoint]
     request = _request(checkpoint, messages, reply)
     judge = FakeJudge(score=0.1)
@@ -166,22 +163,14 @@ async def test_raw_pii_never_reaches_the_judge(profile: str, checkpoint: Checkpo
     )
 
     trace = [(r.check, r.verdict, r.action.value, r.reason) for r in decision.results]
-    if policy.mode("pii_secrets", checkpoint) == Mode.BLOCK:
-        # strict: PII blocks the request outright, so Jev is never consulted at all.
-        assert decision.blocked_by == "pii_secrets", trace
-        assert judge.calls == []
-        return
     assert [r.check for r in decision.results] == ["pii_secrets", "jev"], trace
     assert judge.calls, "jev did not judge anything, so the test proves nothing"
     for call in judge.calls:
         assert RAW_SSN not in call.text and RAW_CARD not in call.text, call.text
     assert any("[REDACTED:SSN]" in c.text and "[REDACTED:CARD]" in c.text for c in judge.calls)
 
-    # Monitor (permissive) records but does not change what goes upstream; the others redact it.
-    if policy.mode("pii_secrets", checkpoint) == Mode.MONITOR:
-        assert RAW_SSN in _all_text(forwarded)
-    else:
-        assert RAW_SSN not in _all_text(forwarded) and RAW_CARD not in _all_text(forwarded)
+    # The redacted text is also what goes on.
+    assert RAW_SSN not in _all_text(forwarded) and RAW_CARD not in _all_text(forwarded)
 
 
 # --- (c) the policy's static check table matches the registry ----------------------------------
@@ -198,31 +187,18 @@ def test_policy_check_table_matches_the_registry() -> None:
 # --- (d) the shipped policy file -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("profile", "pii_tool_result", "jev_input"),
-    [
-        ("strict", Mode.BLOCK, Mode.BLOCK),
-        ("balanced", Mode.REDACT, Mode.BLOCK),
-        ("permissive", Mode.MONITOR, Mode.MONITOR),
-    ],
-)
-def test_shipped_policy_validates_under_every_profile(
-    profile: str, pii_tool_result: Mode, jev_input: Mode
-) -> None:
-    policy = _policy(profile)
+def test_shipped_policy_turns_every_check_on() -> None:
+    policy = _policy()
 
-    assert set(policy.profiles) == {"strict", "balanced", "permissive"}
-    assert policy.active_profile == profile
-    assert policy.mode("pii_secrets", Checkpoint.TOOL_RESULT) == pii_tool_result
-    assert policy.mode("jev", Checkpoint.INPUT) == jev_input
     assert set(policy.checks) == set(CHECK_SPECS)
+    assert all(policy.enabled(cid) for cid in CHECK_SPECS)
+    assert policy.jev_threshold == 0.6
 
 
 # --- a role pii_secrets skips is never sent to Jev ----------------------------------------------
 
 
 def test_jev_must_skip_every_role_pii_skips() -> None:
-    import yaml
 
     from app.core.policy_store import PolicyRejectedError, parse_policy
 
@@ -235,7 +211,7 @@ def test_jev_must_skip_every_role_pii_skips() -> None:
 
 
 async def test_system_prompt_pii_is_not_sent_to_jev() -> None:
-    policy = _policy("balanced")
+    policy = _policy()
     judge = FakeJudge(score=0.0)
     request = _request(
         Checkpoint.INPUT,
@@ -257,3 +233,65 @@ async def test_system_prompt_pii_is_not_sent_to_jev() -> None:
     assert judge.calls, "the user message must still be judged"
     for call in judge.calls:
         assert RAW_SSN not in call.text and RAW_CARD not in call.text
+
+
+# --- Jev at tool_call: the task, the reasoning and the call, redacted ---------------------------
+
+
+async def test_tool_call_view_reaches_jev_redacted_and_the_arguments_stay() -> None:
+    policy = _policy()
+    email = "anna.kowalska@example.com"
+    call = ToolCall(id="c1", name="query_customers", arguments={"email": email})
+    reply = Message(role="assistant", content=f"Looking up {email} first.", tool_calls=[call])
+    request = _request(
+        Checkpoint.TOOL_CALL, [Message(role="user", content=f"Find the plan of {email}.")], reply
+    )
+    judge = FakeJudge(score=0.1)
+
+    decision, forwarded = await run_checkpoint(
+        request,
+        policy,
+        policy.version,
+        judge=judge,
+        audit=MemoryAuditSink(),
+        checks=[get_check("pii_secrets"), get_check("jev")],
+    )
+
+    assert [r.check for r in decision.results] == ["pii_secrets", "jev"], decision.results
+    # Nothing the agent receives is redacted, so the audit must not say so.
+    pii = decision.results[0]
+    assert (pii.verdict, pii.action) == ("redact", Action.ALLOW), pii
+    assert "copy" in pii.reason and decision.action == Action.ALLOW
+    [inp] = judge.calls
+    assert inp.checkpoint == Checkpoint.TOOL_CALL
+    assert email not in inp.text
+    for part in ("task: Find the plan of [REDACTED:EMAIL]", "agent reasoning:", "query_customers"):
+        assert part in inp.text, inp.text
+    # The agent still gets its own call and text: only the copy the checks read is redacted.
+    assert forwarded.reply is not None
+    assert forwarded.reply.tool_calls[0].arguments == {"email": email}
+    assert forwarded.reply.content == reply.content
+
+
+async def test_a_tool_args_block_stops_before_jev() -> None:
+    policy = _policy()
+    call = ToolCall(id="c1", name="run_shell", arguments={"cmd": "rm -rf /"})
+    request = _request(
+        Checkpoint.TOOL_CALL,
+        [Message(role="user", content="Clean up the server.")],
+        Message(role="assistant", tool_calls=[call]),
+    )
+    judge = FakeJudge(score=0.0)
+
+    decision, _ = await run_checkpoint(
+        request,
+        policy,
+        policy.version,
+        ledger=UsageLedger(),
+        signatures=_signatures(policy),
+        judge=judge,
+        audit=MemoryAuditSink(),
+    )
+
+    assert decision.blocked_by == "tool_args", decision.results
+    assert judge.calls == []

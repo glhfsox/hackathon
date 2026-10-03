@@ -55,16 +55,6 @@
     check: budget
     reason_contains: "requests_per_minute exhausted: 30/30"
 
-- name: budget in monitor mode flags instead of blocking
-  checkpoint: input
-  messages: [{role: user, content: "What is the capital of France?"}]
-  usage: {requests_last_minute: 60}
-  policy_patch: {checks: {budget: {input: monitor}}}
-  expect:
-    action: flag
-    check: budget
-    reason_contains: "requests_per_minute exhausted"
-
 # Red team: a trailing tool message makes the checkpoint tool_result, and that request is
 # forwarded upstream too, so it must not skip the budget.
 - name: budget blocks exhausted usage at tool_result

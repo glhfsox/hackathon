@@ -31,6 +31,7 @@ __all__ = [
     "make_result",
     "safe_label",
     "targets",
+    "tool_call_view",
 ]
 
 # message_index used for the upstream reply (contracts/models.md, Redaction)
@@ -80,6 +81,31 @@ def make_result(
     )
 
 
+def tool_call_view(request: CanonicalRequest) -> str:
+    """The text the content checks read at tool_call: what the agent was asked to do (the last
+    user message, which for a delegated worker is the orchestrator's task), its reasoning (the
+    reply text next to the calls) and the calls themselves. Judging the call next to its task
+    lets Jev see a call that does not serve the task.
+
+    The pipeline stores it on the request once (`request.tool_call_view`), and redactions at
+    REPLY_INDEX apply to that copy, so the agent's own arguments are never changed.
+    """
+    if request.tool_call_view is not None:
+        return request.tool_call_view
+    task = next(
+        (m.content for m in reversed(request.messages) if m.role == "user" and m.content), None
+    )
+    reply = request.reply
+    calls = [
+        {"name": c.name, "arguments": c.arguments} for c in (reply.tool_calls if reply else [])
+    ]
+    return (
+        f"task: {task or '(none)'}\n"
+        f"agent reasoning: {(reply.content if reply else None) or '(none)'}\n"
+        f"tool calls: {json.dumps(calls, ensure_ascii=False)}"
+    )
+
+
 def targets(request: CanonicalRequest, *, scope: str = "new") -> list[tuple[int, str]]:
     """Texts a check inspects at the request's checkpoint, as (message_index, text).
 
@@ -88,7 +114,7 @@ def targets(request: CanonicalRequest, *, scope: str = "new") -> list[tuple[int,
     The whole conversation is forwarded upstream and the agent re-sends it raw on every step,
     so content blocked or redacted on an earlier step comes back and must be caught again.
     At tool_call and output the scope does not matter: the text is the reply (REPLY_INDEX), and
-    at tool_call it is the JSON of all tool calls.
+    at tool_call it is the tool-call view (`tool_call_view`).
     """
     cp = request.checkpoint
     msgs = request.messages
@@ -96,11 +122,9 @@ def targets(request: CanonicalRequest, *, scope: str = "new") -> list[tuple[int,
         text = request.reply.content if request.reply else None
         return [(REPLY_INDEX, text)] if text else []
     if cp == Checkpoint.TOOL_CALL:
-        calls = request.reply.tool_calls if request.reply else []
-        if not calls:
+        if not (request.reply and request.reply.tool_calls):
             return []
-        payload = [{"name": c.name, "arguments": c.arguments} for c in calls]
-        return [(REPLY_INDEX, json.dumps(payload, ensure_ascii=False))]
+        return [(REPLY_INDEX, tool_call_view(request))]
     if scope == "all":
         return [(i, m.content) for i, m in enumerate(msgs) if m.content]
     role = "tool" if cp == Checkpoint.TOOL_RESULT else "user"

@@ -35,8 +35,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.proxy import ANONYMOUS_CALLER
-from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy
-from app.models.policy import Policy
+from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy, Mode
+from app.models.policy import CHECK_SPECS, Policy
 
 # AuditRecord.check values that are system events, not check results (contracts/models.md).
 SYSTEM_EVENTS = frozenset(
@@ -182,6 +182,17 @@ def _agents(turns: list[_Turn]) -> dict[str, dict[str, Any]]:
     return agents
 
 
+def _enabled_at(policy: Policy, check_id: str) -> dict[str, str]:
+    """What the check does at each checkpoint, in the shape the dashboard's check matrix reads:
+    `redact` or `block` where an enabled check runs, `off` everywhere else."""
+    spec = CHECK_SPECS.get(check_id)
+    on = Mode.REDACT if check_id == "pii_secrets" else Mode.BLOCK
+    return {
+        cp.value: (on if spec and policy.enabled(check_id) and cp in spec.checkpoints else Mode.OFF)
+        for cp in Checkpoint
+    }
+
+
 def _economics(
     summary_rows: list[_Row],
     turns: list[_Turn],
@@ -306,7 +317,7 @@ def compute_metrics(
             cost_today[record.caller_id] += record.cost
 
     top_reasons = sorted(block_reasons.items(), key=lambda kv: (-kv[1], kv[0]))
-    check_ids = list(dict.fromkeys([*policy.checks, *policy.profile.checks]))
+    check_ids = list(dict.fromkeys([*policy.checks, *CHECK_SPECS]))
 
     # Agent and economic facts: the turn_summary rows, grouped into turns by request.
     summary_rows = [row for row in rows if row[0].check == TURN_SUMMARY]
@@ -318,7 +329,7 @@ def compute_metrics(
     budget = policy.check_config("budget").params
 
     return {
-        "active_profile": policy.active_profile,
+        "jev_threshold": policy.jev_threshold,
         "totals": totals,
         "blocks_by_check": _sorted_counts(blocks_by_check),
         "latency_ms_by_check": {c: _p50_p95(v) for c, v in sorted(latencies.items())},
@@ -332,9 +343,7 @@ def compute_metrics(
             }
         },
         # Additive fields beyond the contract shape.
-        "enabled_checks": {
-            cid: {cp.value: policy.mode(cid, cp).value for cp in Checkpoint} for cid in check_ids
-        },
+        "enabled_checks": {cid: _enabled_at(policy, cid) for cid in check_ids},
         "blocks_by_checkpoint": _sorted_counts(blocks_by_checkpoint),
         "blocks_by_caller": _sorted_counts(blocks_by_caller),
         "actions_by_check": dict(sorted(actions_by_check.items())),

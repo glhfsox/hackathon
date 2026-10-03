@@ -102,7 +102,12 @@ class CachingJudge(MockJudge):
 
 def test_contract():
     assert CHECK.id == "jev" and CHECK.cost_rank == 7
-    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
+    assert CHECK.checkpoints == {
+        Checkpoint.INPUT,
+        Checkpoint.TOOL_CALL,
+        Checkpoint.TOOL_RESULT,
+        Checkpoint.OUTPUT,
+    }
 
 
 async def test_score_equal_to_threshold_blocks():

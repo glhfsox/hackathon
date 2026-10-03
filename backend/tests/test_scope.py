@@ -160,8 +160,8 @@ async def test_system_prompt_is_skipped_by_default_and_checked_when_asked() -> N
     assert _blocked_by(scanned, "signatures"), scanned.results
 
 
-# QA: a defensive system prompt matched PI-004 and blocked every request of that agent, and under
-# strict a contact address in the system prompt blocked everything.
+# QA: a defensive system prompt matched PI-004 and blocked every request of that agent, and a
+# contact address in the system prompt must not be redacted or blocked either.
 DEFENSIVE_SYSTEM = Message(
     role="system",
     content=(
@@ -171,9 +171,8 @@ DEFENSIVE_SYSTEM = Message(
 )
 
 
-@pytest.mark.parametrize("profile", ["balanced", "strict"])
-async def test_defensive_system_prompt_session_is_allowed_at_every_step(profile: str) -> None:
-    policy = Policy.model_validate({**RAW_POLICY, "active_profile": profile})
+async def test_defensive_system_prompt_session_is_allowed_at_every_step() -> None:
+    policy = Policy.model_validate(RAW_POLICY)
     user = Message(role="user", content="Which plan is customer 42 on?")
     result = _tool('[{"id": 42, "plan": "pro"}]')
     answer = Message(role="assistant", content="Customer 42 is on the pro plan.")
@@ -339,13 +338,8 @@ async def test_identical_message_content_gives_identical_judge_input_across_step
     assert all("alice@example.com" not in inp.text for inp in step1 + step2 + step3 + step4)
 
 
-@pytest.mark.parametrize(
-    ("checkpoint", "expected"),
-    [("tool_result", Action.BLOCK), ("output", Action.FLAG)],
-)
-async def test_more_chunks_than_max_judge_calls_fails_closed_per_mode(
-    checkpoint: str, expected: Action
-) -> None:
+@pytest.mark.parametrize("checkpoint", ["tool_result", "output"])
+async def test_more_chunks_than_max_judge_calls_fails_closed(checkpoint: str) -> None:
     # One message of exactly max_judge_calls chunks plus the user message: one chunk too many.
     # Each chunk differs, because identical chunks are judged once.
     long_text = "".join(
@@ -361,8 +355,8 @@ async def test_more_chunks_than_max_judge_calls_fails_closed_per_mode(
         decision, _ = await _run([user], reply=reply, judge=judge)
 
     jev = decision.results[-1]
-    assert (jev.check, jev.verdict, jev.action) == ("jev", "error", expected), decision.results
-    assert decision.action == expected
+    assert (jev.check, jev.verdict, jev.action) == ("jev", "error", Action.BLOCK), decision.results
+    assert decision.action == Action.BLOCK
     assert "max_judge_calls" in jev.reason
     assert judge.calls == [], "no chunk is judged when the request is over the cap"
 

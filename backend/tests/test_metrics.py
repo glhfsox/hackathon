@@ -12,31 +12,16 @@ NOW = datetime(2026, 10, 3, 12, 30, tzinfo=UTC)
 # The shared dev policy (backend/policy.yaml as described in the team brief).
 DEV_POLICY = {
     "version": "0.1",
-    "active_profile": "balanced",
-    "profiles": {
-        "strict": {
-            "jev_threshold": 0.4,
-            "checks": {
-                "pii_secrets": {"input": "block", "tool_result": "block", "output": "block"}
-            },
-        },
-        "balanced": {"jev_threshold": 0.6},
-        "permissive": {"jev_threshold": 0.8},
-    },
+    "jev_threshold": 0.6,
     "models": {"gemma4": {"upstream_base_url": "http://localhost:11434/v1"}},
     "checks": {
-        "permissions": {"input": "block", "tool_call": "block"},
-        "budget": {
-            "input": "block",
-            "requests_per_minute": 60,
-            "tokens_per_day": 200000,
-            "cost_per_day": 1.0,
-        },
-        "loop_detection": {"input": "block", "tool_result": "block", "max_tool_calls": 10},
-        "signatures": {"input": "block", "tool_call": "block", "tool_result": "block"},
-        "tool_args": {"tool_call": "block", "allowed_root": "/workspace"},
-        "pii_secrets": {"input": "redact", "tool_result": "redact", "output": "redact"},
-        "jev": {"input": "block", "tool_result": "block", "output": "monitor"},
+        "permissions": {},
+        "budget": {"requests_per_minute": 60, "tokens_per_day": 200000, "cost_per_day": 1.0},
+        "loop_detection": {"max_tool_calls": 10},
+        "signatures": {},
+        "tool_args": {"allowed_root": "/workspace"},
+        "pii_secrets": {},
+        "jev": {},
     },
     "jev": {"fallback": {"model": "gemma4", "base_url": "http://localhost:11434/v1"}},
 }
@@ -99,7 +84,7 @@ def _dataset() -> list[AuditRecord]:
 
 
 CONTRACT_KEYS = {
-    "active_profile",
+    "jev_threshold",
     "totals",
     "blocks_by_check",
     "latency_ms_by_check",
@@ -183,7 +168,7 @@ def test_empty_input():
 def test_hand_built_dataset_exact():
     m = compute_metrics(_dataset(), _policy(), now=NOW)
     assert set(m) == CONTRACT_KEYS | EXTRA_KEYS
-    assert m["active_profile"] == "balanced"
+    assert m["jev_threshold"] == 0.6
     # r5 has only a system event, so it is not a pipeline request.
     assert m["totals"] == {"requests": 4, "allowed": 1, "redacted": 1, "blocked": 1, "flagged": 1}
     assert m["blocks_by_check"] == {"permissions": 1}
@@ -203,15 +188,15 @@ def test_hand_built_dataset_exact():
     assert m["budget_by_caller"] == {"anonymous": _budget(1600, 200000, 0.75, 1.0)}
     assert m["enabled_checks"]["pii_secrets"] == {
         "input": "redact",
-        "tool_call": "off",
+        "tool_call": "redact",
         "tool_result": "redact",
         "output": "redact",
     }
     assert m["enabled_checks"]["jev"] == {
         "input": "block",
-        "tool_call": "off",
+        "tool_call": "block",
         "tool_result": "block",
-        "output": "monitor",
+        "output": "block",
     }
     assert list(m["enabled_checks"]) == list(DEV_POLICY["checks"])
     assert m["blocks_by_checkpoint"] == {"tool_call": 1}
@@ -239,15 +224,13 @@ def test_hand_built_dataset_exact():
     assert m["policy_versions"] == {"0.1": 12, "0.2": 4}
 
 
-def test_active_profile_overrides_enabled_checks():
-    m = compute_metrics([], _policy(active_profile="strict"), now=NOW)
-    assert m["active_profile"] == "strict"
-    assert m["enabled_checks"]["pii_secrets"] == {
-        "input": "block",
-        "tool_call": "off",
-        "tool_result": "block",
-        "output": "block",
-    }
+def test_a_check_left_out_of_the_policy_shows_as_off():
+    checks = {cid: v for cid, v in DEV_POLICY["checks"].items() if cid != "tool_args"}
+    m = compute_metrics([], _policy(checks=checks), now=NOW)
+    assert m["enabled_checks"]["tool_args"] == dict.fromkeys(
+        ("input", "tool_call", "tool_result", "output"), "off"
+    )
+    assert list(m["enabled_checks"])[-1] == "tool_args"
 
 
 def test_since_filters_everything_but_budget():
@@ -288,7 +271,7 @@ def test_budget_counts_today_only():
 
 
 def test_unlimited_budget_reports_zero_limits():
-    checks = {**DEV_POLICY["checks"], "budget": {"input": "block"}}
+    checks = {**DEV_POLICY["checks"], "budget": {}}
     records = [
         _req("r", "anonymous", "2026-10-03T10:00:00Z", "output", "pii_secrets", "allow",
              tokens=42, cost=0.5),

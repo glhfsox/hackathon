@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from app.models.enums import Action, Checkpoint, DecidedBy
 from app.models.redaction import Redaction
 
-# A check's raw opinion, before the policy mode is applied.
+# A check's raw opinion; the pipeline turns it into the action.
 Verdict = Literal["allow", "redact", "block", "error"]
 
 

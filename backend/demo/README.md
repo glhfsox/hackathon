@@ -39,7 +39,7 @@ first step fails closed.
 | `injection` | `http_get` fetches a local page with hidden instructions for AI agents. It is blocked at `tool_result` (signature `PI-001`), so the page never reaches the model. |
 | `delegate` | The orchestrator delegates a customer lookup to the worker. You see both agents' decisions. |
 | `budget` | Sets `checks.budget.tokens_per_day: 100` in the temp policy and hot-reloads it. The first model call spends the budget, and the next request is blocked by `budget`. The budget is global, so after `--all` the first request is already over it. |
-| `policy_edit` | The same prompt with an email address: under `balanced` the email is redacted at `input`. The runner then sets `active_profile: strict` in the temp copy, and without a restart the request is blocked by `pii_secrets`. |
+| `policy_edit` | The worker lists the workspace with `run_shell`. The runner then removes `run_shell` from `checks.permissions.allowed_tools` in the temp copy, and without a restart the same request is blocked by `permissions`. |
 
 The model is gemma4 and its answers vary. The control layer's decisions are what the scenarios
 demonstrate.

@@ -279,8 +279,7 @@ def test_redacted_reply_is_returned_redacted(gateway: TestClient, upstream: Fake
 def _with_budget(policy_path: Path, budgets: dict[str, Any]) -> None:
     """Replace the policy's budget limits with `budgets` (a limit left out is unlimited)."""
     raw = yaml.safe_load(policy_path.read_text())
-    modes = {k: v for k, v in raw["checks"]["budget"].items() if k in ("input", "tool_result")}
-    raw["checks"]["budget"] = {**modes, **budgets}
+    raw["checks"]["budget"] = budgets
     policy_path.write_text(yaml.safe_dump(raw))
 
 
@@ -324,19 +323,18 @@ def test_policy_hot_edit_changes_the_outcome_without_restart(
     gateway: TestClient, upstream: FakeUpstream, policy_path: Path
 ) -> None:
     text = policy_path.read_text()
-    assert re.search(r"(?m)^active_profile: balanced$", text), "test assumes the shipped profile"
-    messages = [{"role": "user", "content": "Welcome anna.kowalska@example.com aboard."}]
-    upstream.script(completion("Welcome!"))
+    assert re.search(r"(?m)^    allowed_models: \[gemma4\]$", text), "test assumes the shipped list"
+    upstream.script(completion("4"))
 
-    before = _chat(gateway, messages).json()
+    before = _chat(gateway, USER).json()
     version = gateway.get("/api/health").json()["policy_version"]
-    policy_path.write_text(text.replace("active_profile: balanced", "active_profile: strict"))
+    policy_path.write_text(text.replace("allowed_models: [gemma4]", "allowed_models: []"))
     wait_until(lambda: gateway.get("/api/health").json()["policy_version"] != version)
-    after = _chat(gateway, messages).json()
+    after = _chat(gateway, USER).json()
 
-    assert _checkpoints(before)[0] == ("input", "redact")
+    assert _checkpoints(before) == [("input", "allow"), ("output", "allow")]
     assert _checkpoints(after) == [("input", "block")]
-    assert after["choices"][0]["message"]["content"].startswith("Blocked by pii_secrets: ")
+    assert after["choices"][0]["message"]["content"].startswith("Blocked by permissions: ")
     assert len(upstream.requests) == 1
 
 
@@ -370,7 +368,7 @@ def test_health_and_metrics(gateway: TestClient, upstream: FakeUpstream) -> None
     metrics = gateway.get("/api/metrics").json()
 
     assert health["status"] == "ok" and health["fallback"] == "up" and health["jev"] == "down"
-    assert metrics["active_profile"] == "balanced"
+    assert metrics["jev_threshold"] == 0.6
     assert metrics["totals"]["requests"] == 1 and metrics["totals"]["allowed"] == 1
     assert gateway.get("/api/metrics", params={"since": "yesterday"}).status_code == 422
 

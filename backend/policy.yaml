@@ -5,11 +5,10 @@
 #   without a restart. An invalid change is rejected with field-level errors, audited as
 #   `policy_rejected`, and the previous policy stays active, so a typo never takes the system
 #   down. The dashboard editor (PUT /api/policy) validates first and then writes this same file.
-#   Unknown keys are errors, not silently ignored: that includes a misspelled check id (here or
-#   under a profile), a mode for a checkpoint the check never runs at, a parameter the check does
-#   not take or a parameter of the wrong type. A key written twice in one section is an error too
-#   (plain YAML would keep only the last one). Jev may only be on where pii_secrets is on too
-#   (any mode), so Jev never sees unredacted PII.
+#   Unknown keys are errors, not silently ignored: that includes a misspelled check id, a
+#   parameter the check does not take or a parameter of the wrong type. A key written twice in one
+#   section is an error too (plain YAML would keep only the last one). Jev may only be on when
+#   pii_secrets is on too, so Jev never sees unredacted PII.
 #
 # SECRETS
 #   Never put an API key in this file. Jev's key is referenced by the NAME of an environment
@@ -21,36 +20,17 @@
 #   tool_result  data a tool returned, on its way back to the model
 #   output       the model's final answer to the agent
 #
-# MODES (one per check, per checkpoint): off | monitor | redact | block
-#   off      the check does not run at that checkpoint (a checkpoint left out means off)
-#   monitor  the check runs; anything it finds is recorded as "flag", the request is not changed
-#   redact   enforced: sensitive data is replaced; a block verdict or a check error blocks
-#   block    enforced: a block verdict or a check error blocks; sensitive data is replaced
-#   The exact verdict-to-action table is in docs/architecture.md §4.
+# ON / OFF
+#   A check is on when its section exists under `checks` (`{}` or an empty key: on with its
+#   defaults) and off when the section is left out. An enabled check runs at every checkpoint it
+#   applies to. A finding blocks the request; pii_secrets instead replaces what it found and lets
+#   the request through. A check that fails (error, timeout) blocks: never allow on an error.
 
 # Shown in every audit record (plus a hash of this file's content). Bump it when you change things.
-version: "0.1"
+version: "0.2"
 
-# Which profile below is in force. Switch strictness by changing only this line.
-active_profile: balanced
-
-# PROFILES: strictness levels.
-#   jev_threshold  the Jev risk score (0..1) is compared against this; lower is stricter.
-#   checks         optional mode overrides. For the checkpoints a profile names, its mode wins over
-#                  the base `checks` section further down; everything else comes from that section.
-#                  Profiles override modes only, never check parameters.
-profiles:
-  strict:
-    jev_threshold: 0.4
-    checks:
-      pii_secrets: {input: block, tool_result: block, output: block}
-  balanced:
-    jev_threshold: 0.6        # no overrides: the base `checks` section applies as written
-  permissive:
-    jev_threshold: 0.8
-    checks:
-      pii_secrets: {input: monitor, tool_result: monitor, output: monitor}
-      jev:         {input: monitor, tool_result: monitor, output: monitor}
+# Jev blocks when its risk score (0..1) is at or above this. Lower is stricter.
+jev_threshold: 0.6
 
 # MODELS agents may request. The key is the `model` name in the request.
 #   upstream_base_url    any OpenAI-compatible endpoint the request is forwarded to
@@ -63,28 +43,22 @@ models:
     price_per_1k_tokens: 0.0
     timeout_s: 120
 
-# CHECKS: one section per check. Inside a section, the checkpoint keys (input, tool_call,
-# tool_result, output) are MODES; every other key is a PARAMETER handed to that check. A check
-# accepts only the checkpoints and parameters listed for it below. Only jev takes `timeout_s`: the
-# rule checks are fast synchronous code that a timeout could not interrupt.
-# A policy may turn checks off; its `policy_loaded` audit row then names every check that is off.
+# CHECKS: one section per check; every key in a section is a PARAMETER handed to that check. A
+# check accepts only the parameters listed for it below. Only jev takes `timeout_s`: the rule
+# checks are fast synchronous code that a timeout could not interrupt. The `policy_loaded` audit
+# row names every check that is off.
 checks:
   # The requested model (every request to the model: input and tool_result) and the tools the
   # model asks for (tool_call) must be listed here; anything else is blocked.
   #   allowed_models  must name models listed under `models`
   #   allowed_tools   tools agents may call
   permissions:
-    input: block
-    tool_call: block
-    tool_result: block
     allowed_models: [gemma4]
     allowed_tools: [query_customers, run_shell, read_file, http_get, delegate]
 
   # Usage limits, checked on every request to the model: input and tool_result.
   #   requests_per_minute, tokens_per_day, cost_per_day  leave one out for no limit
   budget:
-    input: block
-    tool_result: block
     requests_per_minute: 60
     tokens_per_day: 200000
     cost_per_day: 1.0
@@ -92,17 +66,12 @@ checks:
   # Runaway agents, counted per agent turn (tool calls since the last user message): more than
   # max_tool_calls tool calls, or the same tool with identical arguments more than max_repeats times.
   loop_detection:
-    input: block
-    tool_result: block
     max_tool_calls: 10
     max_repeats: 3
 
   # Patterns from the external attack-signature feed (see `signatures` below).
   #   skip_roles  roles not scanned: the owner's system prompt may quote attacks; Jev still judges it
   signatures:
-    input: block
-    tool_call: block
-    tool_result: block
     skip_roles: [system]
 
   # Dangerous tool arguments.
@@ -110,7 +79,6 @@ checks:
   #   categories    rule families to apply: shell, sql, path_traversal, deserialization
   #   max_command_chars  length limit, in characters, of a shell command in a tool argument
   tool_args:
-    tool_call: block
     allowed_root: "/workspace"
     categories: [shell, sql, path_traversal, deserialization]
     max_command_chars: 2000
@@ -119,22 +87,16 @@ checks:
   #   types  detectors to run: email, phone, ssn, pesel, iban, card, api_key
   #   skip_roles  roles not scanned: the system prompt is written by the agent owner
   pii_secrets:
-    input: redact
-    tool_result: redact
-    output: redact
     types: [email, phone, ssn, pesel, iban, card, api_key]
     skip_roles: [system]
 
-  # Jev, the AI decision maker. Its threshold comes from the active profile. Always runs last.
+  # Jev, the AI decision maker. Its threshold is `jev_threshold` above. Always runs last.
   #   timeout_s  must exceed jev.timeout_s + jev.fallback.timeout_s, or a slow local fallback
   #              is cut off and the request fails closed.
   #   max_chars        size of one judged chunk; longer messages are judged chunk by chunk
   #   max_judge_calls  cap on chunks per request (1..1024); above it the check errors (fails closed)
   #   max_concurrency  most judge calls run in parallel (1..64)
   jev:
-    input: block
-    tool_result: block
-    output: monitor
     timeout_s: 40
     max_chars: 4000
     max_judge_calls: 128
@@ -154,7 +116,7 @@ signatures:
 #   api_key_env NAME of the env var holding the Jev API key
 #   timeout_s  after this, the fallback model is asked instead
 #   fallback   local OpenAI-compatible model (Ollama). If Jev and the fallback both fail, the
-#              request fails closed (blocked) wherever the jev check is in redact or block mode.
+#              request fails closed (blocked).
 jev:
   model: jev-1.13.0
   api_key_env: TYPESAFE_API_KEY

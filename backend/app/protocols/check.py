@@ -1,7 +1,8 @@
 """The one interface every check implements (constitution III). One check, one module.
 
-A check reports its raw opinion in `verdict`; the pipeline maps it to the final `action` from the
-policy mode. A check reads only its own settings and never imports another check.
+A check reports its raw opinion in `verdict`; the pipeline maps it to the final `action` (a finding
+blocks, a redaction is applied, an error blocks). A check reads only its own settings and never
+imports another check.
 """
 
 from __future__ import annotations

@@ -113,7 +113,10 @@ PARAMS = [
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(base)
     for key, value in patch.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
+        if value is None:
+            # `null` removes the key: how a case turns a check off.
+            out.pop(key, None)
+        elif isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _deep_merge(out[key], value)
         else:
             out[key] = copy.deepcopy(value)

@@ -407,7 +407,9 @@ def _compile_extras(raw: Any) -> tuple[list[tuple[str, re.Pattern[str]]], str | 
 class PiiSecretsCheck:
     id = "pii_secrets"
     cost_rank = 6
-    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT})
+    checkpoints = frozenset(
+        {Checkpoint.INPUT, Checkpoint.TOOL_CALL, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
+    )
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

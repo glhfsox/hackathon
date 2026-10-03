@@ -52,7 +52,12 @@ def _found(result, text: str) -> list[tuple[str, str]]:
 def test_metadata():
     assert CHECK.id == "pii_secrets"
     assert CHECK.cost_rank == 6
-    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
+    assert CHECK.checkpoints == {
+        Checkpoint.INPUT,
+        Checkpoint.TOOL_CALL,
+        Checkpoint.TOOL_RESULT,
+        Checkpoint.OUTPUT,
+    }
 
 
 # --- each type: positive -------------------------------------------------------------------

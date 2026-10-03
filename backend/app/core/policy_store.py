@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from app.models import Action, AuditRecord, Checkpoint, Mode, PolicyError, PolicySnapshot
+from app.models import Action, AuditRecord, PolicyError, PolicySnapshot
 from app.models.policy import CHECK_SPECS, Policy
 from app.protocols.audit import AuditSink
 from app.protocols.policy_provider import PolicyRejectedError
@@ -37,9 +37,10 @@ def _format_errors(errors: list[PolicyError]) -> str:
 
 def _dotted(loc: tuple[int | str, ...]) -> str:
     parts = [str(p) for p in loc]
-    # CheckConfig regroups a check's checkpoint keys under `modes` internally. That key is not in
-    # the file, so drop it and point the operator at the key they actually wrote.
-    if len(parts) > 2 and parts[0] == "checks" and parts[2] == "modes":
+    # CheckSection wraps a check's keys under `params` internally. That key is not in the file,
+    # so drop it and point the operator at the key they actually wrote. A bare
+    # `checks.<id>.params` is a key the operator wrote themselves, so it stays.
+    if len(parts) > 3 and parts[0] == "checks" and parts[2] == "params":
         del parts[2]
     return ".".join(parts)
 
@@ -156,10 +157,10 @@ def _load(yaml_text: str, path: Path) -> PolicySnapshot:
 
 
 def _enabled_summary(policy: Policy) -> str:
-    """How many checks run under the active profile, naming those off at every checkpoint. A
-    policy that turns protection off is valid (the policy decides), but never silently so."""
-    off = [cid for cid in CHECK_SPECS if all(policy.mode(cid, cp) == Mode.OFF for cp in Checkpoint)]
-    summary = f"{len(CHECK_SPECS) - len(off)} checks on under profile {policy.active_profile}"
+    """How many checks are on, naming those that are off. A policy that turns protection off is
+    valid (the policy decides), but never silently so."""
+    off = [cid for cid in CHECK_SPECS if not policy.enabled(cid)]
+    summary = f"{len(CHECK_SPECS) - len(off)} checks on, jev_threshold {policy.jev_threshold}"
     return f"{summary}; off: {', '.join(off)}" if off else summary
 
 
