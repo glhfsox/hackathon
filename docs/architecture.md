@@ -14,20 +14,19 @@ Status: **draft v0.1**. The team confirms or changes it through small PRs. Undec
              │ /api/* ◄── dashboard: policy, audit, metrics                              │
              │        policy.yaml (hot reload) · audit.db (append-only) · Jev client     │──► Jev (remote) ─► fallback: local Ollama
              └───────────────────────────────────────────────────────────────────────────┘
- frontend (React) ──► /api/* and /v1/chat/completions (playground)
+ frontend (React) ──► /api/*
 ```
 
 ## 2. Stack
 
-| Part | Choice |
-|------|--------|
-| Backend | Python 3.12, FastAPI, Pydantic v2, httpx (upstream + Jev calls), PyYAML |
-| Storage | SQLite file `backend/data/audit.db`, one append-only table |
-| Upstream LLMs | Any OpenAI-compatible endpoint, set per model in the policy. Default local Ollama at `http://localhost:11434/v1` |
-| AI decision maker | Jev (remote LLM), with a local Ollama model as fallback |
-| Frontend | React + Vite + TypeScript, plain fetch through one API client module |
-| Tests | pytest with data-driven YAML cases |
-| Ports | backend `8000`, frontend `5173`, Ollama `11434` |
+| Part              | Choice                                                                                                           |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Backend           | Python 3.12, FastAPI, Pydantic v2, httpx (upstream + Jev calls), PyYAML                                          |
+| Upstream LLMs     | Any OpenAI-compatible endpoint, set per model in the policy. Default local Ollama at `http://localhost:11434/v1` |
+| AI decision maker | Jev (remote LLM), with a local Ollama model as fallback                                                          |
+| Frontend          | React + Vite + TypeScript, plain fetch through one API client module                                             |
+| Tests             | pytest with data-driven YAML cases                                                                               |
+| Ports             | backend `8000`, frontend `5173`, Ollama `11434`                                                                  |
 
 ## 3. Request lifecycle
 
@@ -55,24 +54,24 @@ The agent re-sends the full conversation on every step, so the layer is **statel
 - The policy gives each check a **mode per checkpoint**: `off | monitor | redact | block`.
 - The pipeline turns a check's raw verdict into the final action:
 
-| Check verdict | `monitor` | `redact` | `block` |
-|---------------|-----------|----------|---------|
-| allow | allow | allow | allow |
-| redact (has redactions) | flag | redact | redact |
-| block | flag | block | block |
-| error / timeout | flag | block | block |
+| Check verdict           | `monitor` | `redact` | `block` |
+| ----------------------- | --------- | -------- | ------- |
+| allow                   | allow     | allow    | allow   |
+| redact (has redactions) | flag      | redact   | redact  |
+| block                   | flag      | block    | block   |
+| error / timeout         | flag      | block    | block   |
 
 - Order is cheapest first and fixed by `cost_rank` in code. The first final `block` stops the pipeline.
 
-| # | Check id | Checkpoints | What it does |
-|---|----------|-------------|--------------|
-| 1 | `permissions` | input, tool_call | Caller may use this model and these tools |
-| 2 | `budget` | input | Requests per minute, tokens per day, cost per day for the caller |
-| 3 | `loop_detection` | input, tool_result | Too many tool calls in the conversation, or the same call with the same args repeated |
-| 4 | `signatures` | input, tool_call, tool_result | Regex patterns from the external attack-signature feed |
-| 5 | `tool_args` | tool_call | Shell danger, destructive SQL, path traversal, unsafe deserialization |
-| 6 | `pii_secrets` | tool_result, output (and input) | Detects and redacts email, phone, PESEL, SSN, IBAN, card numbers, API keys |
-| 7 | `jev` | input, tool_result, output | AI risk score compared against the threshold. Always last. |
+| #   | Check id         | Checkpoints                     | What it does                                                                          |
+| --- | ---------------- | ------------------------------- | ------------------------------------------------------------------------------------- |
+| 1   | `permissions`    | input, tool_call                | Caller may use this model and these tools                                             |
+| 2   | `budget`         | input                           | Requests per minute, tokens per day, cost per day for the caller                      |
+| 3   | `loop_detection` | input, tool_result              | Too many tool calls in the conversation, or the same call with the same args repeated |
+| 4   | `signatures`     | input, tool_call, tool_result   | Regex patterns from the external attack-signature feed                                |
+| 5   | `tool_args`      | tool_call                       | Shell danger, destructive SQL, path traversal, unsafe deserialization                 |
+| 6   | `pii_secrets`    | tool_result, output (and input) | Detects and redacts email, phone, PESEL, SSN, IBAN, card numbers, API keys            |
+| 7   | `jev`            | input, tool_result, output      | AI risk score compared against the threshold. Always last.                            |
 
 `pii_secrets` runs before `jev` on any checkpoint where both are on, so Jev only sees redacted text.
 
@@ -91,7 +90,6 @@ The agent re-sends the full conversation on every step, so the layer is **statel
 - **File:** `backend/policy.yaml`. **OPEN:** schema, to be defined in `contracts/policy.example.yaml`.
 - **Hot reload:** the backend checks the file's mtime every second. A changed file is parsed and validated (Pydantic), then swapped in atomically. An invalid file is logged, audited as `policy_rejected`, and the old policy stays active.
 - **Edits through the API:** `PUT /api/policy` validates first, then writes the file, so the file stays the single source.
-- **Active profile:** the active profile is chosen by `active_profile`. Profiles hold check modes, params and the Jev threshold. Callers, models, budgets and the feed are shared by all profiles.
 - **Secrets:** the policy names API keys by environment variable (`api_key_env`) and never contains them.
 
 ## 7. Tool guard
@@ -106,31 +104,16 @@ The agent re-sends the full conversation on every step, so the layer is **statel
 
 ## 9. Frontend
 
-| Page | Content | Data source |
-|------|---------|-------------|
-| Dashboard | Posture (profile, checks on), blocks over time and by check, budget per caller, latency per check | `/api/metrics` |
-| Audit log | Filterable table with export buttons | `/api/audit`, `/api/audit/export` |
-| Policy | YAML editor with validate and save, showing field errors from the backend | `/api/policy`, `/api/policy/validate` |
-| Playground | Chat with a playground API key, showing which checks fired per message | `/v1/chat/completions` (`control` field) |
+| Page       | Content                                                                                           | Data source                              |
+| ---------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Dashboard  | Posture (profile, checks on), blocks over time and by check, budget per caller, latency per check | `/api/metrics`                           |
+| Audit log  | Filterable table with export buttons                                                              | `/api/audit`, `/api/audit/export`        |
+| Policy     | YAML editor with validate and save, showing field errors from the backend                         | `/api/policy`, `/api/policy/validate`    |
+| Playground | Chat with a playground API key, showing which checks fired per message                            | `/v1/chat/completions` (`control` field) |
 
 All calls go through `frontend/src/api/client.ts`. The backend URL comes from `VITE_API_URL`.
 
-## 10. Repository layout (code)
-
-```
-backend/
-  app/main.py              FastAPI app, routers, policy watcher startup
-  app/api/                 proxy.py (/v1/chat/completions), tools.py (/v1/tools/check), admin.py (/api/*)
-  app/adapters/openai.py   OpenAI JSON <-> CanonicalRequest
-  app/core/                canonical.py, pipeline.py, policy.py, audit.py, jev.py
-  app/checks/              one module per check id + base.py (interface)
-  policy.yaml              active policy (schema OPEN, see §6)
-  tests/cases/<check>.yaml data-driven allow/block cases
-frontend/src/              api/client.ts, pages/, components/
-demo-agent/                tiny agent: query_customers (fake PII DB), run_shell; uses the tool guard
-```
-
-## 11. Tests
+## 10. Tests
 
 - Each `tests/cases/<check>.yaml` file holds a list of `{name, checkpoint, request, expect: {action, check}}`.
 - One parametrized pytest runs every case through the pipeline with Jev mocked.
