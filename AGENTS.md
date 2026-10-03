@@ -132,3 +132,4 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — Jev unavailable → local Ollama fallback; both unavailable → fail closed (supersedes the "fail closed" part above).
 - 2026-10-03 — Draft v0.1 of `docs/architecture.md` and `contracts/` (models, HTTP API) added. OPEN: policy schema (`contracts/policy.example.yaml`).
 - 2026-10-03 — User requested a RAG demo-client extension: implement synthetic financial source-data generation and document retrieval design now; embeddings, vector search, and agent implementation deferred. Supersedes the RAG exclusion for this explicitly requested demo work only (user/Codex).
+- 2026-10-03 — Demo source data moves to PostgreSQL; remove the corpus SQLite integration. Keep JSONL/Markdown fixtures and evaluator-only files. Next step uses BGE-M3 directly in Python for embeddings, then pgvector; chunking/embedding/search remain deferred during this migration (user/Codex).

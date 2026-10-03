@@ -30,7 +30,16 @@ Contact emails end in `.example`; account IBANs are fictional PL/GB examples wit
 - `documents/<document_id>.md`: exact text without evaluator annotations.
 - `documents.jsonl`: Document fields except `text`, replaced by relative `text_path`.
 - `evaluation/ground_truth.jsonl`, `evaluation/questions.jsonl`: evaluator-only.
-- `corpus.sqlite3`: `clients`, `contacts`, `accounts`, `transactions`, `documents`, `document_transactions`; full document text and foreign keys. No evaluation records.
 - `manifest.json`: `schema_version`, `generator_version`, `faker_version`, `config`, entity `counts`, and `files` mapping relative paths to SHA-256. Excludes itself.
 
-Output refuses existing paths. Manifest is written last; a directory without it is incomplete. Validation checks models, references, source spans, hashes, and snapshot agreement.
+Output refuses existing paths. Manifest is written last; a directory without it is incomplete. Offline validation checks models, references, source spans, and hashes. No database artifact is generated.
+
+## PostgreSQL persistence
+
+`python -m demo_data load-postgres <corpus_directory> [--schema <name>]` reads `DEMO_DATABASE_URL` from the environment. Schema defaults to `demo_data`; names must match `[a-z][a-z0-9_]{0,62}`. Database creation and connection credentials are operator setup, not loader output.
+
+The loader first validates the full corpus. Schema creation, source insertion, and exact readback run in one transaction. It creates source tables only: `clients`, `contacts`, `accounts`, `transactions`, `documents`, and `document_transactions`. Evaluation records are never inserted. Identical repeated loading returns `already_loaded`; a different corpus in populated source tables is rejected without replacement. No automatic DROP, DELETE, TRUNCATE, or mutable upsert is used.
+
+Source scalar fields retain their names. Money columns use `BIGINT`; dates use `TIMESTAMPTZ`; all other fields use `TEXT`, including complete exact document `text`. Document `transaction_ids` is normalized into `document_transactions(document_id, transaction_id, client_id)` instead of a duplicated array column. Foreign keys preserve source relationships and client ownership; enums and monetary ranges have CHECK constraints. The executable schema is `demo_data/schema.sql`.
+
+Load response: `status` (`loaded` or `already_loaded`), `schema`, and `counts` for the six persisted tables. The loader compares complete stored rows and link rows with incoming sources before committing, and rejects disagreement. Future chunks, embeddings, and vector search are deferred.

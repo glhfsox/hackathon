@@ -1,6 +1,6 @@
 # Treasury RAG demo design
 
-Status: proposed retrieval implementation. User selected generator plus design; embeddings, vector search, and agent execution are deferred.
+Status: raw source ingestion into PostgreSQL is implemented. Document chunking, BGE-M3 embeddings, pgvector storage/search, and agent execution are deferred.
 
 ## Domain and boundaries
 
@@ -12,18 +12,18 @@ The demo is a client of the [control layer](architecture.md). Data follows [the 
 
 - PostgreSQL for records, document bodies, chunks, and vectors.
 - [pgvector](https://github.com/pgvector/pgvector) cosine similarity. Start with exact search for a few hundred chunks; defer approximate indexes until volume warrants them.
-- Local Ollama [`POST /api/embed`](https://docs.ollama.com/api/embed), initially [`nomic-embed-text:v1.5`](https://ollama.com/library/nomic-embed-text) for this English narrative corpus. Record its exact digest and returned dimension, follow its model-specific input conventions, and use it for documents and queries. No remote embedding of sensitive source text. Re-evaluate the model if Polish narrative documents are added.
+- [`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3) executed directly in Python through FlagEmbedding or sentence-transformers in the next step. The multilingual model supports the Polish diacritics in the source names. Record its exact revision and dimensions, follow its input conventions, and use it for documents and queries. No Ollama embedding runtime is needed.
 - Small Python ingestion/retrieval functions using a PostgreSQL client; no RAG framework initially.
 
-One database preserves links and vectors. SQLite + Chroma/Qdrant splits persistence across stores. PostgreSQL requires a service and extension, its main setup cost.
+One PostgreSQL database preserves records and, in the next step, vectors. PostgreSQL requires a running service; pgvector will be enabled when vector storage is implemented.
 
 ## Ingestion
 
-1. Generate and validate the corpus. Load structured JSONL records with stable links; load document bodies using `documents.jsonl` and `text_path`.
+1. Generate and validate the corpus. Run `load-postgres` to load structured JSONL records with stable links and complete document bodies using `documents.jsonl` and `text_path`. The loader uses a dedicated schema, validates before connecting, commits atomically, and accepts identical repeats. See [the run guide](../demo_data/README.md).
 2. Preserve source/classification/client metadata. Never index `evaluation/`, questions, answers, attack/pair labels, or the manifest as document text.
 3. Split by Markdown headings and paragraphs; roughly 350 tokens with 50-token overlap is an initial setting to measure. Respect model tokenizer/context limits; retain document ID, chunk index, original character range, and content hash. Do not silently truncate.
 4. Prefix embedding input with title/section heading; store that input hash and model identity separately from original offsets.
-5. Embed locally in batches; validate finite vectors, dimensions, response counts, and identity. Persist atomically, resume via hashes; re-embed after model/chunking changes.
+5. In the next step, embed locally with BGE-M3 in batches; validate finite vectors, dimensions, response counts, and identity. Persist atomically, resume via hashes; re-embed after model/chunking changes.
 
 Generator preserves whole documents so later chunk strategies can be tested, including attacks crossing boundaries.
 
