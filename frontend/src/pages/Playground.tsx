@@ -107,7 +107,7 @@ export default function Playground() {
   return (
     <SplitPane className="grow" label="Resize prompt" direction="vertical" initial={0.76} minFirst={180} minSecond={120} first={
       <SplitPane className="grow" label="Resize playground trace" initial={0.65} minFirst={240} minSecond={220} first={
-        <Pane title="transcript.repl" className="grow">
+        <Pane title="Conversation" className="grow">
           {!keySet && (
             <div className="error-text" style={{ marginBottom: 12 }}>
               E VITE_PLAYGROUND_API_KEY is not set: the proxy will answer 401. See frontend/.env.example.
@@ -158,7 +158,7 @@ export default function Playground() {
         </Pane>
       } second={
         <SplitPane className="grow" label="Resize decision trace" direction="vertical" initial={0.65} minFirst={100} minSecond={80} first={
-          <Pane title="decision.trace" className="grow">
+          <Pane title="Decision trace" className="grow">
             {!current?.control && <div className="trace-empty"><span className="bright">Awaiting a decision</span><p>Check results, risk scores and reasons appear here when a selected reply includes a trace.</p></div>}
             {current?.control?.decisions.map((d, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
@@ -187,7 +187,7 @@ export default function Playground() {
             ))}
           </Pane>
         } second={
-          <Pane title="control.json" className="grow">
+          <Pane title="Control payload" className="grow">
             {current?.control ? (
               <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap' }} className="dim">{JSON.stringify(current.control, null, 2)}</pre>
             ) : <div className="trace-empty dim">The selected reply’s control payload will appear here.</div>}

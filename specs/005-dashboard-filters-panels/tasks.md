@@ -26,3 +26,8 @@ Setup → test baseline → US1 → US2 → verification. Stories use shared App
 - [x] T013 Remove the directory sidebar, clock and terminal status path; enlarge the existing top navigation and add useful Playground empty-state guidance.
 - [x] T014 Update existing browser coverage for the shell and remaining dividers.
 - [x] T015 Run frontend browser checks, lint/build and visual review; record results and commit locally on the existing branch. Do not push or merge.
+
+## Follow-up — Plain labels
+- [x] T016 Keep time-window presets/custom input and Audit filters; remove the ornamental Filters panel heading/frame.
+- [x] T017 Use plain section headings and remove decorative brackets from controls/status labels.
+- [x] T018 Update browser coverage, run frontend-only checks and record results.

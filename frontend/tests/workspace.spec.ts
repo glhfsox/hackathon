@@ -40,7 +40,7 @@ test('presets and custom window apply to Overview, Audit and exports', async ({ 
   await page.locator('nav a[href="#audit"]').click()
   await audit
   await page.locator('input').first().fill('demo')
-  for (const name of ['[e]xport csv', '[j]son']) {
+  for (const name of ['Export CSV', 'Export JSON']) {
     const href = await page.getByRole('link', { name, exact: true }).getAttribute('href')
     expect(windowMinutes(href!)).toBe(45)
     expect(new URL(href!).searchParams.get('caller_id')).toBe('demo')
@@ -69,11 +69,11 @@ test('late old-window response cannot overwrite the new metrics', async ({ page 
   })
   await page.goto('/')
   await page.getByRole('button', { name: '1h', exact: true }).click()
-  await expect(page.getByText('profile [new-window]', { exact: true })).toBeVisible()
+  await expect(page.getByText('profile new-window', { exact: true })).toBeVisible()
   release()
   await page.waitForTimeout(150)
-  await expect(page.getByText('profile [new-window]', { exact: true })).toBeVisible()
-  await expect(page.getByText('profile [old-window]', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('profile new-window', { exact: true })).toBeVisible()
+  await expect(page.getByText('profile old-window', { exact: true })).toHaveCount(0)
 })
 
 async function resize(page: Page, handle: Locator, axis: 'x' | 'y', delta: number) {
@@ -109,6 +109,12 @@ test('all panel dividers work with pointer and keyboard', async ({ page }) => {
   await expect(page.locator('header')).not.toContainText(/\d{2}:\d{2}:\d{2}/)
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link')).toHaveCount(4)
   await expect(page.locator('nav a[href="#audit"]')).toHaveAttribute('aria-current', 'page')
+  for (const link of await page.locator('nav a').all()) {
+    const label = await link.textContent()
+    expect(label).not.toContain('[')
+    expect(label).not.toContain(']')
+  }
+  await expect(page.getByRole('heading', { name: 'Audit log (0)' })).toBeVisible()
   await resize(page, page.getByRole('separator', { name: 'Resize audit trace' }), 'x', -100)
   await page.locator('nav a[href="#playground"]').click()
   await expect(page.getByRole('heading', { name: 'Inspect every interaction.' })).toBeVisible()

@@ -110,7 +110,7 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
   return (
     <>
       <div className="row grow">
-        <Pane title={`policy.yaml${modified ? ' [+]' : ''}`} style={{ flex: 3 }} contentClassName="flush">
+        <Pane title={`Policy${modified ? ' · unsaved' : ''}`} style={{ flex: 3 }} contentClassName="flush">
           <div style={{ display: 'flex', height: '100%', background: 'var(--bg)' }}>
             <div
               ref={gutter}
@@ -137,7 +137,7 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
         </Pane>
 
         <div className="col" style={{ width: 320 }}>
-          <Pane title="checks matrix (in force)" className="grow">
+          <Pane title="Active checks" className="grow">
             <Status error={metrics.error} loading={metrics.loading && !metrics.data} />
             <table>
               <thead>
@@ -162,10 +162,10 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
               </tbody>
             </table>
             <div className="dim" style={{ fontSize: 10, marginTop: 8 }}>
-              [F]lag(monitor) [R]edact [B]lock [-]off
+              F: monitor · R: redact · B: block · –: off
             </div>
           </Pane>
-          <Pane title="profile" style={{ flexShrink: 0 }}>
+          <Pane title="Profile" style={{ flexShrink: 0 }}>
             {PROFILES.map((p) => (
               <div key={p}>
                 <button className={`btn ${p === profile ? 'accent' : ''}`} onClick={() => setProfile(p)}>
@@ -177,7 +177,7 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
               edits the text; write to apply
             </div>
           </Pane>
-          <Pane title="history" className="grow">
+          <Pane title="Policy history" className="grow">
             <Status error={history.error} loading={history.loading && !history.data} />
             {(history.data ?? []).map((r, i) => {
               const current = r.check === 'policy_loaded' && r.policy_version === policy.data?.version
@@ -197,22 +197,22 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, flexShrink: 0, marginTop: -10 }}>
+      <div style={{ display: 'flex', gap: 16, flexShrink: 0 }}>
         <button className="btn" disabled={busy} onClick={() => void validate()}>
-          [v]alidate
+          Validate
         </button>
         <button className="btn" disabled={busy || !modified} onClick={() => void save()}>
-          [w]rite &amp; apply <span className="dim">(ctrl+s)</span>
+          Save &amp; apply <span className="dim">(ctrl+s)</span>
         </button>
         <button className="btn" disabled={busy || !modified} onClick={revert}>
-          [r]evert
+          Revert
         </button>
         <span className="dim" style={{ marginLeft: 'auto' }}>
           {policy.data.version} · loaded {fmtTime(policy.data.loaded_at)}
         </span>
       </div>
       {errors.length > 0 && (
-        <Pane title={`errors (${errors.length})`} style={{ flexShrink: 0, maxHeight: 160 }}>
+        <Pane title={`Errors (${errors.length})`} style={{ flexShrink: 0, maxHeight: 160 }}>
           {errors.map((e, i) => (
             <div key={i} className="error-text">
               <span className="rev" style={{ padding: '0 4px', marginRight: 8 }}>

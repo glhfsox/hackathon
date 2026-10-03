@@ -22,7 +22,7 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
         if (!results.length && !sum) {
           return (
             <div key={cp} className="dim" style={{ marginTop: 8 }}>
-              ▸ {cp} [not reached]
+              ▸ {cp} — not reached
             </div>
           )
         }
@@ -31,7 +31,7 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
           <div key={cp} style={{ marginTop: 8 }}>
             <div>
               ▾ <span className={action === 'allow' ? 'bright' : 'accent'}>{cp}</span>{' '}
-              <span className={action === 'allow' ? 'dim' : 'accent'}>[{action.toUpperCase()}]</span>{' '}
+              <span className={action === 'allow' ? 'dim' : 'accent'}>{action.toUpperCase()}</span>{' '}
               {sum && <span className="dim">({sum.latency_ms.toFixed(0)}ms)</span>}
             </div>
             {results.map((r, i) => (
@@ -81,7 +81,7 @@ export default function AuditLog({ range }: { range: TimeRange }) {
 
   return (
     <>
-      <Pane title="filters" style={{ flexShrink: 0 }} contentClassName="filters">
+      <div className="audit-filters">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <label>
             <span className="accent">caller=</span>
@@ -114,16 +114,16 @@ export default function AuditLog({ range }: { range: TimeRange }) {
           </label>
           <span className="accent">|</span>
           <a className="btn" href={auditExportUrl(queryFilters, 'csv')}>
-            [e]xport csv
+            Export CSV
           </a>
           <a className="btn" href={auditExportUrl(queryFilters, 'json')}>
-            [j]son
+            Export JSON
           </a>
         </div>
-      </Pane>
+      </div>
 
       <SplitPane className="grow" label="Resize audit trace" initial={0.65} minFirst={260} minSecond={200} first={
-        <Pane title={`audit.log (${total})`} className="grow" contentClassName="flush">
+        <Pane title={`Audit log (${total})`} className="grow" contentClassName="flush">
           <Status error={audit.error} loading={audit.loading && !audit.data} />
           <table className="log" style={{ fontSize: 12.5 }}>
             <thead>
@@ -180,7 +180,7 @@ export default function AuditLog({ range }: { range: TimeRange }) {
           )}
         </Pane>
       } second={
-        <Pane title={selected ? `trace ${shortId(selected)}` : 'trace'} className="grow" style={{ background: '#000' }}>
+        <Pane title={selected ? `Decision trace ${shortId(selected)}` : 'Decision trace'} className="grow" style={{ background: '#000' }}>
           {selected ? <Trace requestId={selected} rows={items} /> : <div className="dim">// select a row to see its decision trace</div>}
         </Pane>
       } />

@@ -41,7 +41,7 @@ export default function App() {
         <nav aria-label="Main navigation">
           {PAGES.map((p) => (
             <a key={p.id} href={`#${p.id}`} className={`tab ${p.id === page ? 'active' : ''}`} aria-current={p.id === page ? 'page' : undefined}>
-              {p.id === page ? `[${p.tab}]` : p.tab}
+              {p.tab}
             </a>
           ))}
         </nav>

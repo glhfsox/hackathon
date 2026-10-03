@@ -64,3 +64,7 @@ An operator gives Audit trace, Playground decision trace/raw trace, and prompt c
 ## Follow-up — Simplify the application shell (2026-10-03)
 
 The application has one directory, so remove the redundant directory sidebar and its divider. Keep the four existing top navigation tabs, enlarge their hit areas and mark the active page. Remove the clock, localhost identity, NORMAL badge and aegis:// status path. Use restrained branding, spacing and useful Playground empty-state guidance to give the full-width workspace structure. Keep all trace/composer resizing and the shared filter. Test with isolated browser fixtures; do not start or connect a backend. Continue on the existing feature branch without publishing or merging.
+
+## Follow-up — Plain section labels (2026-10-03)
+
+Keep the time-window bar, presets, editable duration and Audit filtering: the user explicitly clarified that custom windows must remain usable for inspecting logs. Remove the ornamental Filters panel heading/frame, use ordinary section headings instead of terminal file names, and remove decorative square brackets from navigation, action buttons and status labels. Preserve actual JSON/policy data and redaction placeholders. Keep Alpin branding and all remaining resize controls.

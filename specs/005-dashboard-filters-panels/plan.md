@@ -31,3 +31,5 @@ Pass before and after design: frontend only displays backend decisions; all HTTP
 Write browser cases first, run to establish expected failures, implement the tasks, then run npm test, npm run lint, npm run build. Inspect browser screenshots with test-only route fixtures. The user explicitly wants frontend testing only; do not start or connect a backend. Keep the dev server available for the user's own test. Commit dependency changes separately.
 
 Follow-up: remove the directory/sidebar split from App, enlarge the branded header, remove clock/status-path clutter, and replace bare Playground placeholders with guidance. Keep the existing four-tab navigation and remaining split panels.
+
+Follow-up: retain editable time windows as explicitly clarified by the user, render normal h2 pane headings in the document flow, flatten Audit filters into a toolbar, and remove decorative brackets from UI labels. Existing browser cases verify filter functionality and the simplified headings.

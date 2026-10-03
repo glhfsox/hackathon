@@ -4,7 +4,7 @@ The footer time filter affected only Overview, and its selected color was overri
 
 Audit trace, Playground trace/JSON panels, and the prompt composer now have pointer and keyboard resize dividers with bounded sizes and double-click reset. The prompt supports multiple lines, explicit Send, and Ctrl/Cmd+Enter.
 
-The redundant single-directory sidebar is removed. A larger branded header keeps the four navigation tabs, while the clock, NORMAL badge and status path are removed. Playground empty states explain the prompt-to-decision flow.
+The redundant single-directory sidebar is removed. A larger branded header keeps the four navigation tabs, while the clock, NORMAL badge and status path are removed. Playground empty states explain the prompt-to-decision flow. Section titles and actions use plain labels, without terminal ornaments or decorative square brackets; the editable time filter and Audit field filters remain available.
 
 Validation: six Chrome interaction tests pass, along with lint, production build, and strict test/config type checking. Tests cover time-window requests/exports, validation, stale responses, resizing, and prompt submission. Live UI/backend verification was not run because backend startup was declined.
 

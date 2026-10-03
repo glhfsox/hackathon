@@ -37,3 +37,15 @@ User confirmed that they will later merge this feature into dev. No feature merg
 - `git diff --check`: exit 0.
 
 Changes remain on the local feature branch; no push or merge is requested for this follow-up.
+
+## Plain headings follow-up
+
+The user clarified that time-window presets and custom durations must stay. All time and Audit field filtering is preserved; only the ornamental Filters heading/frame, terminal-style pane titles and decorative square brackets were removed.
+
+- `npm test -- --workers=2`: **6 passed in 14.3s**, with isolated test-only backend responses. Existing filter/export/validation/race/resize/prompt coverage still passes; the resize case also checks plain tab labels and the Audit heading.
+- `npm run lint`: exit 0 with no diagnostics after removing a redundant regex escape in the test assertion.
+- `npm run build`: exit 0; TypeScript/Vite built 27 modules. An intermediate build caught a stale reference while exploring filter removal, before the clarification was incorporated; the final implementation restores the filter completely.
+- `git diff --check`: exit 0.
+- Overview and 900×650 Playground screenshots were visually reviewed: ordinary headings, no decorative tab brackets, and reachable prompt controls.
+
+No backend startup, push or merge was performed.

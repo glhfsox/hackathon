@@ -181,21 +181,12 @@ textarea {
   min-width: 0;
 }
 .pane-title {
-  position: absolute;
-  top: -11px;
-  left: 10px;
-  background: var(--bg);
-  padding: 0 4px;
-  z-index: 1;
-  white-space: nowrap;
-}
-.pane-title::before {
-  content: '┌─ ';
-  color: var(--line);
-}
-.pane-title::after {
-  content: ' ─┐';
-  color: var(--line);
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
 }
 .pane-content {
   padding: 12px 16px;
@@ -368,7 +359,6 @@ button:focus-visible, a:focus-visible, .split-handle:focus-visible {
 .split-horizontal > .split-handle::after { top: 35%; bottom: 35%; left: 3px; width: 2px; }
 .split-vertical > .split-handle::after { left: 35%; right: 35%; top: 3px; height: 2px; }
 .split-handle:hover::after, .split-handle:focus::after { background: var(--accent); }
-.split-vertical > .split-content > .pane { margin-top: 12px; }
 .prompt-composer {
   display: flex;
   flex-direction: column;
@@ -420,3 +410,5 @@ button:focus-visible, a:focus-visible, .split-handle:focus-visible {
 .workspace-flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; color: var(--accent); font-size: 11px; }
 .trace-empty { padding: 12px 0; }
 .trace-empty p { color: var(--fg-dim); margin: 8px 0 0; }
+
+.audit-filters { padding: 4px 0; flex-shrink: 0; }
