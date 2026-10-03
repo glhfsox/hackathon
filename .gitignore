@@ -1,1 +1,8 @@
 .env
+
+# backend runtime output and caches
+logs/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
