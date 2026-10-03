@@ -90,6 +90,17 @@ The client scope is set by the operator outside the tool arguments, so the model
 | `export_report` | `path` (string, relative to the reports folder), `content` (string) | Saves a report as a text file. | Path traversal such as `../../policy.yaml` is blocked by `tool_args` (path_traversal). `path` is a path argument, so `allowed_root` applies. |
 | `run_sql` | `query` (string) | Read-only SQL by description. It only logs the query in the test app. | `DELETE` or `UPDATE` without a real `WHERE` is blocked by `tool_args` (sql). A `DELETE` with a real `WHERE` passes, so give a read-only tool a read-only database role as well. |
 
+### User roles
+
+The human who sends the request has a role, chosen with `--role` (default `clerk`). The role decides which Operator tools exist for the run. The Analyst is the same for every role.
+
+| Role | Operator tools | Meant for |
+|------|----------------|-----------|
+| `clerk` | `hold_payment`, `send_email`, `export_report` | Routine follow-up. A clerk can stop a payment, but cannot release one or touch the database. |
+| `treasurer` | all five, including `release_payment` and `run_sql` | Moving money and database work. |
+
+The test application enforces the role itself: the Operator is not offered the other tools, and a call to one anyway is refused with `tool '<name>' is not allowed for user role '<role>'`. Anyone who runs the application can still pick any role, so this is not a security boundary. The proxy makes it one: give each role its own Operator caller and key, as in the policy entries below, and the `permissions` check blocks the call even when the application is wrong.
+
 ### Policy entries for the test application
 
 Add these under the existing top-level keys of `policy.yaml`. The `gemma4` model is already declared in the shipped file.
@@ -102,9 +113,15 @@ callers:
     allowed_models: [gemma4]
     allowed_tools: [search_documents, query_transactions]
     budgets: {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
-  operator:                       # Agent B: acts, so it gets no read tools and a smaller budget
-    api_key_env: OPERATOR_API_KEY
-    role: operator
+  operator_clerk:                 # Agent B for a clerk user: no payment release, no SQL
+    api_key_env: OPERATOR_CLERK_API_KEY
+    role: clerk
+    allowed_models: [gemma4]
+    allowed_tools: [hold_payment, send_email, export_report]
+    budgets: {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
+  operator_treasurer:             # Agent B for a treasurer user: every Operator tool
+    api_key_env: OPERATOR_TREASURER_API_KEY
+    role: treasurer
     allowed_models: [gemma4]
     allowed_tools: [send_email, release_payment, hold_payment, export_report, run_sql]
     budgets: {requests_per_minute: 20, tokens_per_day: 50000, cost_per_day: 0.25}
@@ -121,13 +138,17 @@ Then set the keys in the environment before you start the proxy and the agents:
 
 ```sh
 export ANALYST_API_KEY=<random secret>
-export OPERATOR_API_KEY=<another random secret>
+export OPERATOR_CLERK_API_KEY=<another random secret>
+export OPERATOR_TREASURER_API_KEY=<a third random secret>
 ```
+
+The application picks the Operator key that matches the user's role. The Analyst has one key for every role, because it only reads.
 
 With this policy:
 
 - The Analyst calling `release_payment` is blocked by `permissions`.
-- The Operator calling `run_sql` with `DELETE FROM transactions` is blocked by `tool_args`, with the reason `run_sql.query: sql: DELETE without WHERE`.
+- The Operator calling `release_payment` or `run_sql` with the clerk key is blocked by `permissions`, with the reason `tool 'release_payment' is not allowed for role 'clerk'`.
+- The Operator calling `run_sql` with `DELETE FROM transactions` with the treasurer key is blocked by `tool_args`, with the reason `run_sql.query: sql: DELETE without WHERE`.
 - `export_report` with `../../policy.yaml` is blocked by `tool_args`, with the reason `export_report.path: path_traversal: '..' segment`.
 
 ## 6. Template for your own tool

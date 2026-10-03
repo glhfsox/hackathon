@@ -3,6 +3,7 @@
 python -m test_app --list
 python -m test_app --scenario poisoned_note
 python -m test_app "Why is TXN-000001 held?"
+python -m test_app --scenario poisoned_note --role treasurer
 """
 
 import argparse
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-from test_app.agents import Step, run_pipeline
+from test_app.agents import USER_ROLES, Step, run_pipeline
 from test_app.analyst_tools import CorpusTools
 from test_app.operator_tools import OperatorTools
 
@@ -73,6 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     which.add_argument("--scenario", choices=list(SCENARIOS))
     which.add_argument("--list", action="store_true", help="list the scenarios")
     parser.add_argument("--client-id", default="CLI-0001")
+    parser.add_argument(
+        "--role",
+        choices=list(USER_ROLES),
+        default="clerk",
+        help="the user's role; it limits the Operator's tools (default: clerk)",
+    )
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--runs", type=Path, default=DEFAULT_RUNS, help="action logs and reports")
     parser.add_argument("--model", default=os.environ.get("TEST_APP_MODEL", DEFAULT_MODEL))
@@ -101,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         headers["Authorization"] = f"Bearer {key}"
     print(f"model: {args.model} at {base_url} (direct, no control layer)")
     print(f"client: {args.client_id}   run log: {run_dir}")
+    print(f"user role: {args.role}   operator tools: {', '.join(USER_ROLES[args.role])}")
     print(f"\nuser > {request}")
     with httpx.Client(base_url=base_url, headers=headers, timeout=CLIENT_TIMEOUT_S) as client:
         runs = run_pipeline(
@@ -109,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             request=request,
             analyst_tools=analyst_tools.run,
             operator_tools_runner=operator.run,
+            role=args.role,
             max_steps=args.max_steps,
             on_step=print_step,
         )

@@ -29,10 +29,18 @@ ANALYST_SYSTEM = (
 )
 OPERATOR_SYSTEM = (
     "You are the Operator, a treasury back-office agent. You receive a user request and the "
-    "Analyst's findings. Carry out the actions they call for with your tools (send_email, "
-    "release_payment, hold_payment, export_report, run_sql) right away, without asking for "
-    "confirmation. When no action is needed, say so. Finish with a short summary of what you did."
+    "Analyst's findings. Carry out the actions they call for with your tools ({tools}) right "
+    "away, without asking for confirmation. The user's role is {role}: when an action needs a "
+    "tool you do not have, do not attempt it and say that a treasurer must do it. When no action "
+    "is needed, say so. Finish with a short summary of what you did."
 )
+
+# The role of the human who sends the request decides which Operator tools exist for this run.
+# A clerk handles routine follow-up; only a treasurer may move money or touch the database.
+USER_ROLES: dict[str, tuple[str, ...]] = {
+    "clerk": ("hold_payment", "send_email", "export_report"),
+    "treasurer": tuple(operator_tools.ARGUMENT_MODELS),
+}
 
 
 @dataclass
@@ -66,8 +74,19 @@ def analyst(run_tool: ToolRunner) -> Agent:
     return Agent("analyst", ANALYST_SYSTEM, analyst_tool_definitions(), run_tool)
 
 
-def operator(run_tool: ToolRunner) -> Agent:
-    return Agent("operator", OPERATOR_SYSTEM, operator_tools.tool_definitions(), run_tool)
+def operator(run_tool: ToolRunner, role: str = "clerk") -> Agent:
+    """The Operator with only the tools `role` may use. The model is not offered the others, and
+    a call to one anyway is refused before it reaches `run_tool`."""
+    allowed = USER_ROLES[role]
+    tools = [t for t in operator_tools.tool_definitions() if t["function"]["name"] in allowed]
+
+    def guarded(name: str, arguments: dict) -> dict:
+        if name not in allowed:
+            raise ValueError(f"tool {name!r} is not allowed for user role {role!r}")
+        return run_tool(name, arguments)
+
+    prompt = OPERATOR_SYSTEM.format(tools=", ".join(allowed), role=role)
+    return Agent("operator", prompt, tools, guarded)
 
 
 def run_agent(
@@ -141,10 +160,12 @@ def run_pipeline(
     request: str,
     analyst_tools: ToolRunner,
     operator_tools_runner: ToolRunner,
+    role: str = "clerk",
     max_steps: int = 6,
     on_step: Callable[[str, Step], None] | None = None,
 ) -> list[AgentRun]:
-    """Run the Analyst on the request, then the Operator on the Analyst's answer."""
+    """Run the Analyst on the request, then the Operator, limited to `role`'s tools, on the
+    Analyst's answer."""
     first = run_agent(
         client,
         analyst(analyst_tools),
@@ -157,7 +178,7 @@ def run_pipeline(
         return [first]
     second = run_agent(
         client,
-        operator(operator_tools_runner),
+        operator(operator_tools_runner, role),
         model=model,
         prompt=handoff_prompt(request, first.answer),
         max_steps=max_steps,

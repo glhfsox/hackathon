@@ -9,7 +9,7 @@ import pytest
 from demo_data.generate import generate
 from demo_data.models import GenerationConfig
 from demo_data.storage import export
-from test_app.agents import analyst, handoff_prompt, run_agent, run_pipeline
+from test_app.agents import analyst, handoff_prompt, operator, run_agent, run_pipeline
 from test_app.analyst_tools import CorpusTools
 from test_app.operator_tools import OperatorTools
 
@@ -108,6 +108,7 @@ def test_handoff_runs_the_operator_on_the_analyst_answer(corpus_dir: Path, tmp_p
         request="What should we do with TXN-000001?",
         analyst_tools=CorpusTools(corpus_dir, "CLI-0001").run,
         operator_tools_runner=operator.run,
+        role="treasurer",
     )
     assert [r.status for r in runs] == ["answered", "answered"]
     assert '"transaction_id": "TXN-000001"' in requests[1]["messages"][-1]["content"]
@@ -116,6 +117,24 @@ def test_handoff_runs_the_operator_on_the_analyst_answer(corpus_dir: Path, tmp_p
     )
     assert {t["function"]["name"] for t in requests[2]["tools"]} >= {"release_payment", "run_sql"}
     assert [a["tool"] for a in operator.actions()] == ["release_payment"]
+
+
+def test_clerk_cannot_release_payments_or_run_sql(tmp_path: Path) -> None:
+    tools = OperatorTools(tmp_path)
+    client, requests = scripted(
+        tool_reply(
+            call("release_payment", {"transaction_id": "TXN-000001"}, "c1"),
+            call("hold_payment", {"transaction_id": "TXN-000001"}, "c2"),
+        ),
+        answer("Held TXN-000001; a treasurer must release it."),
+    )
+    run = run_agent(client, operator(tools.run, "clerk"), model="m", prompt="release it")
+    offered = {t["function"]["name"] for t in requests[0]["tools"]}
+    assert offered == {"hold_payment", "send_email", "export_report"}
+    assert run.calls[0].result == (
+        "error: ValueError: tool 'release_payment' is not allowed for user role 'clerk'"
+    )
+    assert [a["tool"] for a in tools.actions()] == ["hold_payment"]
 
 
 def test_operator_mocks_never_escape_or_execute(tmp_path: Path) -> None:
