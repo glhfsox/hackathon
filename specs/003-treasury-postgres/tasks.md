@@ -32,7 +32,7 @@ Independent test: identical repeated load, conflict rejection, and database fail
 
 - [X] T011 Remove obsolete generated SQLite snapshots and update their manifest inventories under demo_data/generated/
 - [X] T012 Run unit/integration/lint/format and default corpus loading; record actual results in specs/003-treasury-postgres/validation.md
-- [ ] T013 Commit dependency pins separately and prepare local delivery notes in specs/003-treasury-postgres/pr-description.md
+- [X] T013 Commit dependency pins separately and prepare local delivery notes in specs/003-treasury-postgres/pr-description.md
 
 ## Dependencies and implementation strategy
 
