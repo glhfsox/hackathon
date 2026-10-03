@@ -12,7 +12,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from app.sinks import read_jsonl
+from app.observability.sinks import read_jsonl
 from demo.gateway import create_app
 from tests.demo.conftest import AUTH, FakeUpstream, completion, wait_until
 

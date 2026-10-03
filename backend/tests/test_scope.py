@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from app.audit import MemoryAuditSink
-from app.budget import UsageLedger
+from app.core.budget import UsageLedger
+from app.core.pipeline import detect_reply_checkpoint, detect_request_checkpoint, run_checkpoint
+from app.core.signatures import load_signatures
 from app.models import (
     Action,
     CanonicalRequest,
@@ -25,9 +26,8 @@ from app.models import (
     ToolCall,
     ToolDef,
 )
-from app.pipeline import detect_reply_checkpoint, detect_request_checkpoint, run_checkpoint
-from app.policy import Policy
-from app.signatures import load_signatures
+from app.models.policy import Policy
+from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -89,7 +89,7 @@ async def _run(
 
 
 def _blocked_by(decision: Decision, check: str) -> bool:
-    return decision.action == Action.block and decision.blocked_by == check
+    return decision.action == Action.BLOCK and decision.blocked_by == check
 
 
 class ScriptedJudge(FakeJudge):
@@ -156,7 +156,7 @@ async def test_system_prompt_is_skipped_by_default_and_checked_when_asked() -> N
     skipped, _ = await _run(messages, judge=judge)
     scanned, _ = await _run(messages, policy=_policy(signatures={"skip_roles": []}))
 
-    assert skipped.action == Action.allow, skipped.results
+    assert skipped.action == Action.ALLOW, skipped.results
     assert judge.calls and not any(INJECTION in inp.text for inp in judge.calls)
     assert _blocked_by(scanned, "signatures"), scanned.results
 
@@ -190,7 +190,7 @@ async def test_defensive_system_prompt_session_is_allowed_at_every_step(profile:
     ]
 
     for decision, forwarded in steps:
-        assert decision.action == Action.allow, decision.results
+        assert decision.action == Action.ALLOW, decision.results
         assert forwarded.messages[0].content == DEFENSIVE_SYSTEM.content
 
 
@@ -207,7 +207,7 @@ async def test_tool_args_refusal_in_history_does_not_block(cmd: str) -> None:
         [user, _refusal(first), Message(role="user", content="Then list the open tickets.")]
     )
 
-    assert later.action == Action.allow, later.results
+    assert later.action == Action.ALLOW, later.results
 
 
 async def test_injection_in_user_message_blocks_at_tool_result() -> None:
@@ -236,7 +236,7 @@ async def test_refusal_text_in_history_does_not_block(attack: str) -> None:
         ]
     )
 
-    assert later.action == Action.allow, later.results
+    assert later.action == Action.ALLOW, later.results
 
 
 @pytest.mark.parametrize(
@@ -290,7 +290,7 @@ async def test_benign_multi_turn_session_is_allowed_at_every_step() -> None:
     ]
 
     for decision, _ in steps:
-        assert decision.action == Action.allow, decision.results
+        assert decision.action == Action.ALLOW, decision.results
 
 
 # --- jev: every message judged, chunk by chunk, with stable inputs ---
@@ -322,7 +322,7 @@ async def test_identical_message_content_gives_identical_judge_input_across_step
     ) -> tuple[list[JudgeInput], CanonicalRequest]:
         judge = FakeJudge(score=0.1)
         decision, forwarded = await _run(messages, reply=reply, judge=judge)
-        assert decision.action in (Action.allow, Action.redact), decision.results
+        assert decision.action in (Action.ALLOW, Action.REDACT), decision.results
         return judge.calls, forwarded
 
     step1, _ = await judged([system, user])
@@ -342,7 +342,7 @@ async def test_identical_message_content_gives_identical_judge_input_across_step
 
 @pytest.mark.parametrize(
     ("checkpoint", "expected"),
-    [("tool_result", Action.block), ("output", Action.flag)],
+    [("tool_result", Action.BLOCK), ("output", Action.FLAG)],
 )
 async def test_more_chunks_than_max_judge_calls_fails_closed_per_mode(
     checkpoint: str, expected: Action
@@ -391,7 +391,7 @@ async def test_max_score_wins_with_its_reason_and_decider() -> None:
 
     jev = decision.results[-1]
     assert _blocked_by(decision, "jev"), decision.results
-    assert jev.score == 0.7 and jev.decided_by == DecidedBy.fallback
+    assert jev.score == 0.7 and jev.decided_by == DecidedBy.FALLBACK
     assert "hidden instruction in data" in jev.reason and "hidden_instruction" in jev.reason
 
 
@@ -415,7 +415,7 @@ async def test_secret_in_argument_key_or_tool_name_never_reaches_reason_or_audit
         request_id="r",
         caller_id="demo",
         model=f"gemma4 {ssn}",
-        checkpoint=Checkpoint.tool_call,
+        checkpoint=Checkpoint.TOOL_CALL,
         messages=[Message(role="user", content="clean up")],
         reply=reply,
     )
@@ -426,7 +426,7 @@ async def test_secret_in_argument_key_or_tool_name_never_reaches_reason_or_audit
         assert result.verdict == "block"
         dumped += result.model_dump_json()
     model_check = await get_check("permissions").run(
-        request.model_copy(update={"checkpoint": Checkpoint.input}), {}, ctx
+        request.model_copy(update={"checkpoint": Checkpoint.INPUT}), {}, ctx
     )
     dumped += model_check.model_dump_json()
     assert ssn not in dumped and token not in dumped

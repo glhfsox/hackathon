@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from app.budget import UsageLedger
+from app.core.budget import UsageLedger
 
 
 class FakeClock:

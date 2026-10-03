@@ -39,14 +39,14 @@ def _history(tool: str = "query_customers") -> list[Message]:
 
 
 async def test_allowed_model():
-    result = await CHECK.run(_request(Checkpoint.input), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.INPUT), {}, CTX)
     assert result.verdict == "allow"
     assert result.check == "permissions"
     assert result.score == 0.0
 
 
 async def test_disallowed_model_names_model_and_role():
-    result = await CHECK.run(_request(Checkpoint.input, model="gpt-4o"), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.INPUT, model="gpt-4o"), {}, CTX)
     assert result.verdict == "block"
     assert result.score == 1.0
     assert "gpt-4o" in result.reason
@@ -54,12 +54,12 @@ async def test_disallowed_model_names_model_and_role():
 
 
 async def test_allowed_tool():
-    result = await CHECK.run(_request(Checkpoint.tool_call, tools=["query_customers"]), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=["query_customers"]), {}, CTX)
     assert result.verdict == "allow"
 
 
 async def test_disallowed_tool_names_tool_and_role():
-    req = _request(Checkpoint.tool_call, tools=["query_customers", "run_shell", "run_shell"])
+    req = _request(Checkpoint.TOOL_CALL, tools=["query_customers", "run_shell", "run_shell"])
     result = await CHECK.run(req, {}, CTX)
     assert result.verdict == "block"
     assert "run_shell" in result.reason
@@ -68,18 +68,18 @@ async def test_disallowed_tool_names_tool_and_role():
 
 
 async def test_tool_call_without_calls_is_an_error():
-    result = await CHECK.run(_request(Checkpoint.tool_call), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL), {}, CTX)
     assert result.verdict == "error"
 
 
 def test_metadata():
     assert CHECK.id == "permissions"
     assert CHECK.cost_rank == 1
-    assert CHECK.checkpoints == {Checkpoint.input, Checkpoint.tool_call, Checkpoint.tool_result}
+    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_CALL, Checkpoint.TOOL_RESULT}
 
 
 async def test_allowed_model_at_tool_result():
-    result = await CHECK.run(_request(Checkpoint.tool_result, messages=_history()), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT, messages=_history()), {}, CTX)
     assert result.verdict == "allow"
     assert "gemma4" in result.reason
 
@@ -87,7 +87,7 @@ async def test_allowed_model_at_tool_result():
 async def test_disallowed_model_at_tool_result_blocks():
     # Red team: a trailing tool message must not skip the model allow-list, because this
     # request is forwarded upstream to request.model just like an input request.
-    req = _request(Checkpoint.tool_result, model="gpt-4o", messages=_history())
+    req = _request(Checkpoint.TOOL_RESULT, model="gpt-4o", messages=_history())
     result = await CHECK.run(req, {}, CTX)
     assert result.verdict == "block"
     assert "gpt-4o" in result.reason
@@ -96,13 +96,13 @@ async def test_disallowed_model_at_tool_result_blocks():
 
 async def test_tool_calls_in_history_are_not_rejected():
     # Decided: past calls were judged at their own tool_call checkpoint; see the module comment.
-    for checkpoint in (Checkpoint.input, Checkpoint.tool_result):
+    for checkpoint in (Checkpoint.INPUT, Checkpoint.TOOL_RESULT):
         req = _request(checkpoint, messages=_history(tool="run_shell"))
         assert (await CHECK.run(req, {}, CTX)).verdict == "allow"
 
 
 async def test_output_checkpoint_is_an_error():
-    result = await CHECK.run(_request(Checkpoint.output), {}, CTX)
+    result = await CHECK.run(_request(Checkpoint.OUTPUT), {}, CTX)
     assert result.verdict == "error"
 
 
@@ -116,7 +116,7 @@ DEV_CTX = CheckContext(
 
 @pytest.mark.parametrize("name", ["Run_Shell", "run_shell ", " run_shell", ""])
 async def test_tool_name_variants_are_not_allowed(name):
-    result = await CHECK.run(_request(Checkpoint.tool_call, tools=[name]), {}, DEV_CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=[name]), {}, DEV_CTX)
     assert result.verdict == "block"
     # A name that is not a plain identifier is withheld from the reason (it is model-chosen).
     shown = name if name == "Run_Shell" else "<unprintable name>"
@@ -124,14 +124,14 @@ async def test_tool_name_variants_are_not_allowed(name):
 
 
 async def test_exact_tool_name_is_allowed():
-    result = await CHECK.run(_request(Checkpoint.tool_call, tools=["run_shell"]), {}, DEV_CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=["run_shell"]), {}, DEV_CTX)
     assert result.verdict == "allow"
 
 
 EMPTY_CTX = CheckContext(caller_role="locked", allowed_models=[], allowed_tools=[])
 
 
-@pytest.mark.parametrize("checkpoint", [Checkpoint.input, Checkpoint.tool_result])
+@pytest.mark.parametrize("checkpoint", [Checkpoint.INPUT, Checkpoint.TOOL_RESULT])
 async def test_empty_allowed_models_blocks_every_model(checkpoint):
     result = await CHECK.run(_request(checkpoint, messages=_history()), {}, EMPTY_CTX)
     assert result.verdict == "block"
@@ -140,7 +140,7 @@ async def test_empty_allowed_models_blocks_every_model(checkpoint):
 
 async def test_empty_allowed_tools_blocks_every_tool():
     result = await CHECK.run(
-        _request(Checkpoint.tool_call, tools=["query_customers"]), {}, EMPTY_CTX
+        _request(Checkpoint.TOOL_CALL, tools=["query_customers"]), {}, EMPTY_CTX
     )
     assert result.verdict == "block"
     assert "query_customers" in result.reason

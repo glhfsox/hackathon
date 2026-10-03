@@ -6,10 +6,18 @@ from typing import Any
 
 import pytest
 
-from app.audit import MemoryAuditSink
-from app.budget import UsageLedger
 from app.checks.base import CheckContext, Signature, make_result
 from app.checks.jev import CHECK as JEV
+from app.core.budget import UsageLedger
+from app.core.pipeline import (
+    apply_mode,
+    apply_redactions,
+    build_context,
+    conversation_id,
+    detect_reply_checkpoint,
+    detect_request_checkpoint,
+    run_checkpoint,
+)
 from app.models import (
     Action,
     CanonicalRequest,
@@ -22,16 +30,8 @@ from app.models import (
     ToolCall,
     Usage,
 )
-from app.pipeline import (
-    apply_mode,
-    apply_redactions,
-    build_context,
-    conversation_id,
-    detect_reply_checkpoint,
-    detect_request_checkpoint,
-    run_checkpoint,
-)
-from app.policy import CheckConfig, Policy
+from app.models.policy import CheckSection, Policy
+from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
 
 ALL = frozenset(Checkpoint)
@@ -102,12 +102,12 @@ def _policy(checks: dict[str, Any], version: str = "t1", price: float = 0.0) -> 
     )
     # The fake checks have ids the policy schema rightly rejects, so their sections are set
     # after validation. The schema is tested in test_policy_schema.py.
-    sections = {cid: CheckConfig.model_validate(raw) for cid, raw in checks.items()}
+    sections = {cid: CheckSection.model_validate(raw) for cid, raw in checks.items()}
     return policy.model_copy(update={"checks": sections})
 
 
 def _request(
-    checkpoint: Checkpoint = Checkpoint.input,
+    checkpoint: Checkpoint = Checkpoint.INPUT,
     content: str = "hello",
     reply: Message | None = None,
 ) -> CanonicalRequest:
@@ -140,18 +140,18 @@ async def _run(checks, modes: dict[str, Any], request=None, audit_sink=None, **k
 def test_detect_request_checkpoint():
     user = Message(role="user", content="q")
     tool = Message(role="tool", content="r", tool_call_id="1")
-    assert detect_request_checkpoint([user]) == Checkpoint.input
-    assert detect_request_checkpoint([user, tool]) == Checkpoint.tool_result
-    assert detect_request_checkpoint([tool, user]) == Checkpoint.input
-    assert detect_request_checkpoint([]) == Checkpoint.input
+    assert detect_request_checkpoint([user]) == Checkpoint.INPUT
+    assert detect_request_checkpoint([user, tool]) == Checkpoint.TOOL_RESULT
+    assert detect_request_checkpoint([tool, user]) == Checkpoint.INPUT
+    assert detect_request_checkpoint([]) == Checkpoint.INPUT
 
 
 def test_detect_reply_checkpoint():
     call = ToolCall(id="1", name="run_shell", arguments={"cmd": "ls"})
     assert detect_reply_checkpoint(Message(role="assistant", tool_calls=[call])) == (
-        Checkpoint.tool_call
+        Checkpoint.TOOL_CALL
     )
-    assert detect_reply_checkpoint(Message(role="assistant", content="hi")) == Checkpoint.output
+    assert detect_reply_checkpoint(Message(role="assistant", content="hi")) == Checkpoint.OUTPUT
 
 
 # --- mode table -------------------------------------------------------------------------
@@ -160,18 +160,18 @@ def test_detect_reply_checkpoint():
 @pytest.mark.parametrize(
     ("verdict", "mode", "expected"),
     [
-        ("allow", Mode.monitor, Action.allow),
-        ("allow", Mode.redact, Action.allow),
-        ("allow", Mode.block, Action.allow),
-        ("redact", Mode.monitor, Action.flag),
-        ("redact", Mode.redact, Action.redact),
-        ("redact", Mode.block, Action.block),
-        ("block", Mode.monitor, Action.flag),
-        ("block", Mode.redact, Action.block),
-        ("block", Mode.block, Action.block),
-        ("error", Mode.monitor, Action.flag),
-        ("error", Mode.redact, Action.block),
-        ("error", Mode.block, Action.block),
+        ("allow", Mode.MONITOR, Action.ALLOW),
+        ("allow", Mode.REDACT, Action.ALLOW),
+        ("allow", Mode.BLOCK, Action.ALLOW),
+        ("redact", Mode.MONITOR, Action.FLAG),
+        ("redact", Mode.REDACT, Action.REDACT),
+        ("redact", Mode.BLOCK, Action.BLOCK),
+        ("block", Mode.MONITOR, Action.FLAG),
+        ("block", Mode.REDACT, Action.BLOCK),
+        ("block", Mode.BLOCK, Action.BLOCK),
+        ("error", Mode.MONITOR, Action.FLAG),
+        ("error", Mode.REDACT, Action.BLOCK),
+        ("error", Mode.BLOCK, Action.BLOCK),
     ],
 )
 def test_mode_table(verdict, mode, expected):
@@ -180,7 +180,7 @@ def test_mode_table(verdict, mode, expected):
 
 def test_mode_off_is_never_applied():
     with pytest.raises(ValueError):
-        apply_mode("block", Mode.off)
+        apply_mode("block", Mode.OFF)
 
 
 # --- ordering, stopping, skipping -------------------------------------------------------
@@ -191,7 +191,7 @@ async def test_checks_run_in_cost_order():
     modes = {cid: {"input": "block"} for cid in "abc"}
     decision, _ = await _run(checks, modes)
     assert [r.check for r in decision.results] == ["a", "b", "c"]
-    assert decision.action == Action.allow
+    assert decision.action == Action.ALLOW
     assert decision.blocked_by is None
 
 
@@ -201,7 +201,7 @@ async def test_first_block_stops_later_checks():
     decision, _ = await _run(
         [later, first], {"first": {"input": "block"}, "later": {"input": "block"}}
     )
-    assert decision.action == Action.block
+    assert decision.action == Action.BLOCK
     assert decision.blocked_by == "first"
     assert [r.check for r in decision.results] == ["first"]
     assert later.seen == []
@@ -213,15 +213,15 @@ async def test_monitor_block_does_not_stop_the_pipeline():
     decision, _ = await _run(
         [first, later], {"first": {"input": "monitor"}, "later": {"input": "block"}}
     )
-    assert [r.action for r in decision.results] == [Action.flag, Action.allow]
-    assert decision.action == Action.flag
+    assert [r.action for r in decision.results] == [Action.FLAG, Action.ALLOW]
+    assert decision.action == Action.FLAG
     assert decision.blocked_by is None
 
 
 async def test_off_and_not_applicable_checks_are_skipped():
     off = FakeCheck("off", 1, "block")
     unconfigured = FakeCheck("unconfigured", 2, "block")
-    elsewhere = FakeCheck("elsewhere", 3, "block", checkpoints=frozenset({Checkpoint.output}))
+    elsewhere = FakeCheck("elsewhere", 3, "block", checkpoints=frozenset({Checkpoint.OUTPUT}))
     runs = FakeCheck("runs", 4)
     modes = {"off": {"input": "off"}, "elsewhere": {"input": "block"}, "runs": {"input": "block"}}
     decision, _ = await _run([off, unconfigured, elsewhere, runs], modes)
@@ -238,7 +238,7 @@ async def test_settings_are_the_check_params_without_modes():
 # --- errors and timeouts ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("mode", "expected"), [("block", Action.block), ("monitor", Action.flag)])
+@pytest.mark.parametrize(("mode", "expected"), [("block", Action.BLOCK), ("monitor", Action.FLAG)])
 async def test_exception_becomes_error(mode, expected):
     boom = FakeCheck("boom", 1, raises=RuntimeError("feed exploded"))
     decision, _ = await _run([boom], {"boom": {"input": mode}})
@@ -254,7 +254,7 @@ async def test_timeout_becomes_error():
     decision, _ = await _run([slow], {"slow": {"input": "block", "timeout_s": 0.01}})
     (result,) = decision.results
     assert result.verdict == "error"
-    assert result.action == Action.block
+    assert result.action == Action.BLOCK
     assert "timed out" in result.reason
     assert decision.blocked_by == "slow"
 
@@ -264,7 +264,7 @@ async def test_invalid_redaction_fails_closed():
     check = FakeCheck("bad", 1, "redact", redactions=bad)
     decision, out = await _run([check], {"bad": {"input": "redact"}})
     assert decision.results[0].verdict == "error"
-    assert decision.action == Action.block
+    assert decision.action == Action.BLOCK
     assert out.messages[0].content == "hello"
 
 
@@ -286,7 +286,7 @@ async def test_redaction_is_seen_by_later_checks_and_returned():
     assert judge_like.seen[0].messages[0].content == "my ssn is [REDACTED:SSN] ok"
     assert out.messages[0].content == "my ssn is [REDACTED:SSN] ok"
     assert original.messages[0].content == "my ssn is 123-45-6789 ok"
-    assert decision.action == Action.redact
+    assert decision.action == Action.REDACT
 
 
 async def test_monitor_redaction_reaches_later_checks_but_not_upstream():
@@ -296,7 +296,7 @@ async def test_monitor_redaction_reaches_later_checks_but_not_upstream():
     later = FakeCheck("later", 2)
     modes = {"redactor": {"input": "monitor"}, "later": {"input": "block"}}
     decision, out = await _run([redactor, later], modes)
-    assert decision.results[0].action == Action.flag
+    assert decision.results[0].action == Action.FLAG
     assert later.seen[0].messages[0].content == "[REDACTED:X]"
     assert out.messages[0].content == "hello"
 
@@ -310,7 +310,7 @@ async def test_enforced_redaction_after_a_monitor_redaction():
         Message(role="user", content="id 123-45-6789 at a@b.co"),
     ]
     request = CanonicalRequest(
-        request_id="req-1", caller_id="demo", model="m", checkpoint=Checkpoint.input, messages=msgs
+        request_id="req-1", caller_id="demo", model="m", checkpoint=Checkpoint.INPUT, messages=msgs
     )
     monitored = FakeCheck(
         "monitored", 1, "redact", redactions=[_red(3, 14, "SSN", 0), _red(3, 14, "SSN", 1)]
@@ -326,7 +326,7 @@ async def test_enforced_redaction_after_a_monitor_redaction():
 
     decision, out = await _run([monitored, enforced, later], modes, request=request)
 
-    assert [r.action for r in decision.results] == [Action.flag, Action.redact, Action.allow]
+    assert [r.action for r in decision.results] == [Action.FLAG, Action.REDACT, Action.ALLOW]
     assert [m.content for m in later.seen[0].messages] == [
         "id [REDACTED:SSN]",
         "id [REDACTED:SSN] at [REDACTED:EMAIL]",
@@ -345,7 +345,7 @@ async def test_invalid_redaction_in_monitor_mode_is_an_error_flag():
     decision, out = await _run(
         [check, later], {"bad": {"input": "monitor"}, "later": {"input": "block"}}
     )
-    assert (decision.results[0].verdict, decision.results[0].action) == ("error", Action.flag)
+    assert (decision.results[0].verdict, decision.results[0].action) == ("error", Action.FLAG)
     assert decision.results[0].redactions == []
     assert later.seen[0].messages[0].content == "hello"
     assert out.messages[0].content == "hello"
@@ -391,11 +391,11 @@ def test_apply_redactions_rejects_bad_targets():
 @pytest.mark.parametrize(
     ("verdicts", "expected"),
     [
-        ([], Action.allow),
-        ([("allow", "block")], Action.allow),
-        ([("allow", "block"), ("block", "monitor")], Action.flag),
-        ([("block", "monitor"), ("redact", "redact"), ("allow", "block")], Action.redact),
-        ([("redact", "redact"), ("block", "block")], Action.block),
+        ([], Action.ALLOW),
+        ([("allow", "block")], Action.ALLOW),
+        ([("allow", "block"), ("block", "monitor")], Action.FLAG),
+        ([("block", "monitor"), ("redact", "redact"), ("allow", "block")], Action.REDACT),
+        ([("redact", "redact"), ("block", "block")], Action.BLOCK),
     ],
 )
 async def test_decision_takes_the_strongest_action(verdicts, expected):
@@ -406,7 +406,7 @@ async def test_decision_takes_the_strongest_action(verdicts, expected):
         modes[f"c{i}"] = {"input": mode}
     decision, _ = await _run(checks, modes)
     assert decision.action == expected
-    assert decision.checkpoint == Checkpoint.input
+    assert decision.checkpoint == Checkpoint.INPUT
     assert decision.request_id == "req-1"
 
 
@@ -420,10 +420,10 @@ async def test_one_audit_record_per_result(audit_sink):
     rec = records[1]
     assert datetime.fromisoformat(rec.ts).utcoffset() == UTC.utcoffset(None)
     assert (rec.request_id, rec.caller_id, rec.model) == ("req-1", "demo", "m")
-    assert rec.checkpoint == Checkpoint.input
-    assert (rec.action, rec.reason, rec.score) == (Action.block, "b says block", 1.0)
+    assert rec.checkpoint == Checkpoint.INPUT
+    assert (rec.action, rec.reason, rec.score) == (Action.BLOCK, "b says block", 1.0)
     assert rec.latency_ms == decision.results[1].latency_ms
-    assert rec.decided_by == DecidedBy.rules
+    assert rec.decided_by == DecidedBy.RULES
     assert rec.policy_version == "t1"
     assert (rec.tokens, rec.cost) == (0, 0.0)
 
@@ -431,17 +431,17 @@ async def test_one_audit_record_per_result(audit_sink):
 @pytest.mark.parametrize(
     ("checkpoint", "with_usage"),
     [
-        (Checkpoint.input, False),
-        (Checkpoint.tool_result, False),
-        (Checkpoint.tool_call, True),
-        (Checkpoint.output, True),
+        (Checkpoint.INPUT, False),
+        (Checkpoint.TOOL_RESULT, False),
+        (Checkpoint.TOOL_CALL, True),
+        (Checkpoint.OUTPUT, True),
     ],
 )
 async def test_usage_only_on_first_reply_record(checkpoint, with_usage):
     reply = None
-    if checkpoint == Checkpoint.tool_call:
+    if checkpoint == Checkpoint.TOOL_CALL:
         reply = Message(role="assistant", tool_calls=[ToolCall(id="1", name="run_shell")])
-    elif checkpoint == Checkpoint.output:
+    elif checkpoint == Checkpoint.OUTPUT:
         reply = Message(role="assistant", content="done")
     sink = MemoryAuditSink()
     modes = {cid: {checkpoint.value: "block"} for cid in "ab"}
@@ -476,10 +476,10 @@ STEP1 = [
 ]
 # One agent session: the conversation and reply the pipeline sees at each checkpoint.
 SESSION = {
-    Checkpoint.input: (STEP0, None),
-    Checkpoint.tool_call: (STEP0, Message(role="assistant", tool_calls=CALLS)),
-    Checkpoint.tool_result: (STEP1, None),
-    Checkpoint.output: (STEP1, Message(role="assistant", content="3 customers")),
+    Checkpoint.INPUT: (STEP0, None),
+    Checkpoint.TOOL_CALL: (STEP0, Message(role="assistant", tool_calls=CALLS)),
+    Checkpoint.TOOL_RESULT: (STEP1, None),
+    Checkpoint.OUTPUT: (STEP1, Message(role="assistant", content="3 customers")),
 }
 
 
@@ -498,10 +498,10 @@ def _session_request(checkpoint: Checkpoint) -> CanonicalRequest:
 @pytest.mark.parametrize(
     ("checkpoint", "step", "messages", "tool_calls", "tools", "total", "with_usage"),
     [
-        (Checkpoint.input, 0, 2, None, None, 0, False),
-        (Checkpoint.tool_call, 0, 2, 2, "query_customers,run_shell", 2, True),
-        (Checkpoint.tool_result, 1, 5, None, None, 2, False),
-        (Checkpoint.output, 1, 5, 0, None, 2, True),
+        (Checkpoint.INPUT, 0, 2, None, None, 0, False),
+        (Checkpoint.TOOL_CALL, 0, 2, 2, "query_customers,run_shell", 2, True),
+        (Checkpoint.TOOL_RESULT, 1, 5, None, None, 2, False),
+        (Checkpoint.OUTPUT, 1, 5, 0, None, 2, True),
     ],
 )
 async def test_turn_summary_row_at_each_checkpoint(
@@ -527,11 +527,11 @@ async def test_turn_summary_row_at_each_checkpoint(
         "model": "m",
         "checkpoint": checkpoint,
         "check": "turn_summary",
-        "action": Action.allow,
+        "action": Action.ALLOW,
         "reason": "allowed",
         "score": 0.0,
         "latency_ms": overhead,
-        "decided_by": DecidedBy.rules,
+        "decided_by": DecidedBy.RULES,
         "tokens": 1200 if with_usage else 0,
         "cost": 0.36 if with_usage else 0.0,
         "policy_version": "t1",
@@ -556,14 +556,14 @@ async def test_turn_summary_is_written_when_every_check_is_off():
     decision, _ = await _run(
         [off],
         {"off": {"output": "off"}},
-        request=_session_request(Checkpoint.output),
+        request=_session_request(Checkpoint.OUTPUT),
         audit_sink=sink,
         usage=Usage(prompt_tokens=100, completion_tokens=20),
     )
-    assert decision.results == [] and decision.action == Action.allow
+    assert decision.results == [] and decision.action == Action.ALLOW
     [summary] = sink.records
     assert summary.check == "turn_summary"
-    assert summary.action == Action.allow
+    assert summary.action == Action.ALLOW
     assert summary.reason == "allowed: no check enabled at this checkpoint"
     assert (summary.score, summary.latency_ms, summary.overhead_ms) == (0.0, 0.0, 0.0)
     # The upstream usage is kept even though no check row was written.
@@ -579,10 +579,10 @@ async def test_turn_summary_of_a_rule_block():
     ]
     await _run(checks, {"a": {"input": "redact"}, "tool_args": {"input": "block"}}, audit_sink=sink)
     summary = sink.records[-1]
-    assert (summary.action, summary.reason) == (Action.block, "blocked by tool_args")
+    assert (summary.action, summary.reason) == (Action.BLOCK, "blocked by tool_args")
     assert (summary.blocked_by, summary.decided_by, summary.score) == (
         "tool_args",
-        DecidedBy.rules,
+        DecidedBy.RULES,
         1.0,
     )
 
@@ -611,12 +611,12 @@ async def test_turn_summary_reason_names_redacting_and_flagging_checks():
     modes = {"r1": {"input": "redact"}, "r2": {"input": "redact"}, "m": {"input": "monitor"}}
     await _run(checks, modes, audit_sink=sink)
     redacted = sink.records[-1]
-    assert (redacted.action, redacted.reason) == (Action.redact, "redacted by r1, r2")
+    assert (redacted.action, redacted.reason) == (Action.REDACT, "redacted by r1, r2")
 
     await _run([FakeCheck("m", 1, "block")], {"m": {"input": "monitor"}}, audit_sink=sink)
     flagged = sink.records[-1]
-    assert (flagged.action, flagged.reason) == (Action.flag, "flagged by m")
-    assert flagged.decided_by == DecidedBy.rules
+    assert (flagged.action, flagged.reason) == (Action.FLAG, "flagged by m")
+    assert flagged.decided_by == DecidedBy.RULES
 
 
 def test_conversation_id_is_stable_across_steps_and_differs_by_caller():
@@ -636,7 +636,7 @@ async def test_cost_is_computed_from_the_policy_price():
     async def summary(**usage_kw: Any):
         sink = MemoryAuditSink()
         await run_checkpoint(
-            _session_request(Checkpoint.output),
+            _session_request(Checkpoint.OUTPUT),
             policy,
             policy.version,
             policy.callers["demo"],

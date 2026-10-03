@@ -13,7 +13,6 @@ import logging
 import os
 import re
 import tempfile
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,9 +20,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from app.audit import AuditSink
-from app.models import Action, AuditRecord, Checkpoint, Mode
-from app.policy import CHECK_SPECS, Policy
+from app.models import Action, AuditRecord, Checkpoint, Mode, PolicyError, PolicySnapshot
+from app.models.policy import CHECK_SPECS, Policy
+from app.protocols.audit import AuditSink
+from app.protocols.policy_provider import PolicyRejectedError
 
 log = logging.getLogger(__name__)
 
@@ -31,16 +31,8 @@ log = logging.getLogger(__name__)
 _NO_POLICY = "none"
 
 
-def _format_errors(errors: list[dict[str, str]]) -> str:
-    return "; ".join(f"{e['loc'] or '(root)'}: {e['msg']}" for e in errors)
-
-
-class PolicyError(Exception):
-    """An invalid policy. `errors` has the shape `POST /api/policy/validate` returns."""
-
-    def __init__(self, errors: list[dict[str, str]]) -> None:
-        super().__init__(_format_errors(errors))
-        self.errors = errors
+def _format_errors(errors: list[PolicyError]) -> str:
+    return "; ".join(f"{e.loc or '(root)'}: {e.msg}" for e in errors)
 
 
 def _dotted(loc: tuple[int | str, ...]) -> str:
@@ -60,13 +52,13 @@ def _yaml_msg(exc: yaml.YAMLError) -> str:
 
 
 class _DuplicateKeys(yaml.YAMLError):
-    def __init__(self, errors: list[dict[str, str]]) -> None:
+    def __init__(self, errors: list[PolicyError]) -> None:
         super().__init__(_format_errors(errors))
         self.errors = errors
 
 
 def _find_duplicates(
-    node: yaml.Node, path: tuple[str, ...], errors: list[dict[str, str]], walked: set[int]
+    node: yaml.Node, path: tuple[str, ...], errors: list[PolicyError], walked: set[int]
 ) -> None:
     # An alias points at a node already walked; skipping it also ends a recursive alias.
     if id(node) in walked:
@@ -88,12 +80,12 @@ def _find_duplicates(
             ident = (key.tag, key.value)
             if ident in first_line:
                 errors.append(
-                    {
-                        "loc": ".".join(child),
-                        "msg": f"duplicate key '{key.value}' at line {line} (first at line "
+                    PolicyError(
+                        loc=".".join(child),
+                        msg=f"duplicate key '{key.value}' at line {line} (first at line "
                         f"{first_line[ident]}): YAML would silently keep only the last one; "
                         "write each key once",
-                    }
+                    )
                 )
             else:
                 first_line[ident] = line
@@ -110,7 +102,7 @@ class _PolicyLoader(yaml.SafeLoader):
     """
 
     def construct_document(self, node: yaml.Node) -> Any:
-        errors: list[dict[str, str]] = []
+        errors: list[PolicyError] = []
         _find_duplicates(node, (), errors, set())
         if errors:
             raise _DuplicateKeys(errors)
@@ -129,45 +121,36 @@ _PolicyLoader.add_implicit_resolver(
 
 
 def parse_policy(yaml_text: str) -> Policy:
-    """Parse and validate policy YAML. Every failure is a PolicyError with field-level errors."""
+    """Parse and validate policy YAML. Every failure raises PolicyRejectedError."""
     try:
         raw = yaml.load(yaml_text, Loader=_PolicyLoader)  # a SafeLoader: builds plain data only
     except _DuplicateKeys as exc:
-        raise PolicyError(exc.errors) from exc
+        raise PolicyRejectedError(exc.errors) from exc
     except yaml.YAMLError as exc:
-        raise PolicyError([{"loc": "", "msg": _yaml_msg(exc)}]) from exc
+        raise PolicyRejectedError([PolicyError(loc="", msg=_yaml_msg(exc))]) from exc
     if not isinstance(raw, dict):
         got = "an empty document" if raw is None else f"a {type(raw).__name__}"
-        raise PolicyError([{"loc": "", "msg": f"the policy must be a YAML mapping, got {got}"}])
+        raise PolicyRejectedError(
+            [PolicyError(loc="", msg=f"the policy must be a YAML mapping, got {got}")]
+        )
     try:
         return Policy.model_validate(raw)
     except ValidationError as exc:
-        raise PolicyError(
-            [{"loc": _dotted(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+        raise PolicyRejectedError(
+            [PolicyError(loc=_dotted(e["loc"]), msg=e["msg"]) for e in exc.errors()]
         ) from exc
 
 
-@dataclass(frozen=True)
-class LoadedPolicy:
-    """One validated policy snapshot. A request takes one and uses it to the end."""
-
-    policy: Policy
-    version: str
-    loaded_at: str
-    yaml_text: str
-    path: Path
-
-
-def _load(yaml_text: str, path: Path) -> LoadedPolicy:
+def _load(yaml_text: str, path: Path) -> PolicySnapshot:
     policy = parse_policy(yaml_text)
     # The content hash makes two different files never share a version, even when the operator
     # forgets to bump `version`.
     digest = hashlib.sha256(yaml_text.encode("utf-8")).hexdigest()[:8]
-    return LoadedPolicy(
+    return PolicySnapshot(
         policy=policy,
         version=f"{policy.version}+{digest}",
-        loaded_at=datetime.now(UTC).isoformat(),
-        yaml_text=yaml_text,
+        yaml=yaml_text,
+        loaded_at=datetime.now(UTC),
         path=path,
     )
 
@@ -175,7 +158,7 @@ def _load(yaml_text: str, path: Path) -> LoadedPolicy:
 def _enabled_summary(policy: Policy) -> str:
     """How many checks run under the active profile, naming those off at every checkpoint. A
     policy that turns protection off is valid (the policy decides), but never silently so."""
-    off = [cid for cid in CHECK_SPECS if all(policy.mode(cid, cp) == Mode.off for cp in Checkpoint)]
+    off = [cid for cid in CHECK_SPECS if all(policy.mode(cid, cp) == Mode.OFF for cp in Checkpoint)]
     summary = f"{len(CHECK_SPECS) - len(off)} checks on under profile {policy.active_profile}"
     return f"{summary}; off: {', '.join(off)}" if off else summary
 
@@ -208,43 +191,46 @@ class PolicyStore:
     def __init__(self, path: Path, audit: AuditSink) -> None:
         self._path = path
         self._audit = audit
-        self._current: LoadedPolicy | None = None
+        self._current: PolicySnapshot | None = None
         # (mtime_ns, size) at the last look; None while the file cannot be stat'ed.
         self._seen: tuple[int, int] | None = None
         # The last broken file content the poll loop audited, so one broken save is audited once.
         self._rejected: str | None = None
         self._task: asyncio.Task[None] | None = None
 
-    async def load_initial(self) -> LoadedPolicy:
-        """Load the file at startup. Raises PolicyError: there is no previous policy to keep."""
+    async def load_initial(self) -> PolicySnapshot:
+        """Load the file at startup. An invalid first file raises PolicyRejectedError."""
         self._seen = self._stat()
         try:
             loaded = _load(self._read(), self._path)
-        except PolicyError as exc:
+        except PolicyRejectedError as exc:
             await self._audit_rejected(exc.errors, "startup")
             raise
         self._current = loaded
         await self._audit_loaded(loaded, "startup")
         return loaded
 
-    def current(self) -> LoadedPolicy:
+    def current(self) -> PolicySnapshot:
         if self._current is None:
             raise RuntimeError("no policy loaded; call load_initial() first")
         return self._current
 
-    def validate(self, yaml_text: str) -> list[dict[str, str]]:
+    def validate(self, yaml_text: str) -> list[PolicyError]:
         """Field-level errors, empty when valid. No side effects."""
         try:
             parse_policy(yaml_text)
-        except PolicyError as exc:
+        except PolicyRejectedError as exc:
             return exc.errors
         return []
 
-    async def replace(self, yaml_text: str) -> LoadedPolicy:
-        """Validate, write the file atomically, then swap. Invalid: PolicyError, file untouched."""
+    async def save(self, yaml_text: str) -> PolicySnapshot:
+        """Validate, write the file atomically, then swap.
+
+        An invalid policy raises PolicyRejectedError and leaves the file untouched.
+        """
         try:
             loaded = _load(yaml_text, self._path)
-        except PolicyError as exc:
+        except PolicyRejectedError as exc:
             await self._audit_rejected(exc.errors, "api")
             raise
         # The poll loop will see the new mtime, find the text equal to current() and do nothing.
@@ -262,18 +248,18 @@ class PolicyStore:
         self._seen = seen
         try:
             text = self._read()
-        except PolicyError as exc:
+        except PolicyRejectedError as exc:
             # Missing or unreadable, e.g. mid-save in an editor that deletes and recreates the
             # file: a rejected edit, the old policy stays.
-            await self._reject_file(exc.errors, exc.errors[0]["msg"])
+            await self._reject_file(exc.errors, exc.errors[0].msg)
             return False
-        if text == self.current().yaml_text:
+        if text == self.current().yaml:
             # Saved unchanged, or reverted to the policy in force after a broken edit.
             self._rejected = None
             return False
         try:
             loaded = _load(text, self._path)
-        except PolicyError as exc:
+        except PolicyRejectedError as exc:
             await self._reject_file(exc.errors, text)
             return False
         self._rejected = None
@@ -318,28 +304,30 @@ class PolicyStore:
             # whether the text arrived through replace() or through the file.
             return self._path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            raise PolicyError([{"loc": "", "msg": f"cannot read {self._path}: {exc}"}]) from exc
+            raise PolicyRejectedError(
+                [PolicyError(loc="", msg=f"cannot read {self._path}: {exc}")]
+            ) from exc
 
-    async def _reject_file(self, errors: list[dict[str, str]], content_key: str) -> None:
+    async def _reject_file(self, errors: list[PolicyError], content_key: str) -> None:
         if content_key == self._rejected:
             return
         self._rejected = content_key
         await self._audit_rejected(errors, "file")
 
-    async def _audit_loaded(self, loaded: LoadedPolicy, source: str) -> None:
+    async def _audit_loaded(self, loaded: PolicySnapshot, source: str) -> None:
         reason = f"policy {loaded.version} loaded ({source}); {_enabled_summary(loaded.policy)}"
         log.info("%s from %s", reason, self._path)
         await self._audit.write(
             AuditRecord(
-                ts=loaded.loaded_at,
+                ts=loaded.loaded_at.isoformat(),
                 check="policy_loaded",
-                action=Action.allow,
+                action=Action.ALLOW,
                 reason=reason,
                 policy_version=loaded.version,
             )
         )
 
-    async def _audit_rejected(self, errors: list[dict[str, str]], source: str) -> None:
+    async def _audit_rejected(self, errors: list[PolicyError], source: str) -> None:
         version = self._current.version if self._current is not None else _NO_POLICY
         kept = f"{version} stays active" if self._current is not None else "no policy active"
         reason = f"policy rejected ({source}), {kept}: {_format_errors(errors)}"
@@ -348,7 +336,7 @@ class PolicyStore:
             AuditRecord(
                 ts=datetime.now(UTC).isoformat(),
                 check="policy_rejected",
-                action=Action.block,
+                action=Action.BLOCK,
                 reason=reason,
                 policy_version=version,
             )

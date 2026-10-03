@@ -9,9 +9,10 @@ from typing import Any
 import pytest
 import yaml
 
+from app.core.policy_store import parse_policy
 from app.models import Checkpoint, Mode
-from app.policy import CHECK_SPECS, Policy
-from app.policy_store import PolicyError, parse_policy
+from app.models.policy import CHECK_SPECS, Policy
+from app.protocols.policy_provider import PolicyRejectedError
 
 POLICY_FILE = Path(__file__).parent.parent / "policy.yaml"
 
@@ -29,7 +30,7 @@ def _errors(mutate: Callable[[dict[str, Any]], None]) -> list[dict[str, str]]:
     """Field-level errors of the dev policy after `mutate`; fails if the edit is accepted."""
     raw = _raw()
     mutate(raw)
-    with pytest.raises(PolicyError) as exc:
+    with pytest.raises(PolicyRejectedError) as exc:
         parse_policy(yaml.safe_dump(raw))
     return exc.value.errors
 
@@ -67,14 +68,14 @@ def test_dev_policy_validates(policy: Policy) -> None:
 
 @pytest.mark.parametrize(
     ("profile", "expected"),
-    [("strict", Mode.block), ("balanced", Mode.redact), ("permissive", Mode.monitor)],
+    [("strict", Mode.BLOCK), ("balanced", Mode.REDACT), ("permissive", Mode.MONITOR)],
 )
 def test_profile_switch_changes_pii_mode_at_tool_result(profile: str, expected: Mode) -> None:
     policy = _with_profile(profile)
 
-    assert policy.mode("pii_secrets", Checkpoint.tool_result) == expected
+    assert policy.mode("pii_secrets", Checkpoint.TOOL_RESULT) == expected
     # A profile overrides only what it names: tool_args keeps its base mode everywhere.
-    assert policy.mode("tool_args", Checkpoint.tool_call) == Mode.block
+    assert policy.mode("tool_args", Checkpoint.TOOL_CALL) == Mode.BLOCK
 
 
 def test_caller_for_key_resolves_via_env(policy: Policy, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,17 +100,17 @@ def test_caller_for_key_never_matches_empty_env(
 
 def test_check_config_splits_modes_from_params(policy: Policy) -> None:
     loop = policy.check_config("loop_detection")
-    assert loop.modes == {Checkpoint.input: Mode.block, Checkpoint.tool_result: Mode.block}
+    assert loop.modes == {Checkpoint.INPUT: Mode.BLOCK, Checkpoint.TOOL_RESULT: Mode.BLOCK}
     assert loop.params == {"max_tool_calls": 10, "max_repeats": 3}
-    assert loop.mode(Checkpoint.output) == Mode.off
+    assert loop.mode(Checkpoint.OUTPUT) == Mode.OFF
 
     tool_args = policy.check_config("tool_args")
-    assert tool_args.modes == {Checkpoint.tool_call: Mode.block}
+    assert tool_args.modes == {Checkpoint.TOOL_CALL: Mode.BLOCK}
     assert set(tool_args.params) == {"allowed_root", "categories", "max_command_chars"}
 
     assert policy.check_config("permissions").params == {}
     unknown = policy.check_config("no_such_check")
-    assert unknown.modes == {} and unknown.mode(Checkpoint.input) == Mode.off
+    assert unknown.modes == {} and unknown.mode(Checkpoint.INPUT) == Mode.OFF
 
 
 def test_dev_policy_usability_params(policy: Policy) -> None:
@@ -170,7 +171,7 @@ def test_dev_policy_usability_params(policy: Policy) -> None:
 )
 def test_unknown_check_ids_checkpoints_and_params_are_rejected(mutate, loc: str) -> None:
     errors = _errors(mutate)
-    assert loc in [e["loc"] for e in errors], errors
+    assert loc in [e.loc for e in errors], errors
 
 
 @pytest.mark.parametrize(
@@ -211,7 +212,7 @@ def test_bad_param_values_are_rejected_at_load(
     check: str, param: str, value: Any, loc_suffix: str
 ) -> None:
     errors = _errors(lambda r: r["checks"][check].update({param: value}))
-    assert f"checks.{check}.{param}{loc_suffix}" in [e["loc"] for e in errors], errors
+    assert f"checks.{check}.{param}{loc_suffix}" in [e.loc for e in errors], errors
 
 
 @pytest.mark.parametrize(
@@ -243,15 +244,15 @@ def test_timeout_s_is_only_a_jev_param(check: str) -> None:
     # Rule checks are synchronous CPU work, so a timeout could never interrupt them: a timeout_s
     # there would only pretend to bound them.
     errors = _errors(lambda r: r["checks"][check].update(timeout_s=5))
-    [err] = [e for e in errors if e["loc"] == f"checks.{check}.timeout_s"]
-    assert "unknown key" in err["msg"]
+    [err] = [e for e in errors if e.loc == f"checks.{check}.timeout_s"]
+    assert "unknown key" in err.msg
 
 
 # --- YAML that would silently change what the policy says is an error --------------------------
 
 
 def _text_errors(text: str) -> list[dict[str, str]]:
-    with pytest.raises(PolicyError) as exc:
+    with pytest.raises(PolicyRejectedError) as exc:
         parse_policy(text)
     return exc.value.errors
 
@@ -285,9 +286,9 @@ def _text_errors(text: str) -> list[dict[str, str]]:
 )
 def test_duplicate_keys_are_rejected(text: str, loc: str, line: int) -> None:
     [err] = _text_errors(text)
-    assert err["loc"] == loc
+    assert err.loc == loc
     key = loc.rsplit(".", 1)[-1]
-    assert f"'{key}'" in err["msg"] and f"line {line}" in err["msg"], err
+    assert f"'{key}'" in err.msg and f"line {line}" in err.msg, err
 
 
 def test_duplicate_section_in_dev_policy_is_rejected() -> None:
@@ -295,7 +296,7 @@ def test_duplicate_section_in_dev_policy_is_rejected() -> None:
         "\nchecks:\n", "\nchecks:\n  tool_args: {tool_call: block}\n"
     )
     errors = _text_errors(text)
-    assert [e["loc"] for e in errors] == ["checks.tool_args"]
+    assert [e.loc for e in errors] == ["checks.tool_args"]
 
 
 @pytest.mark.parametrize("spelling", ["off", '"off"', "'off'"])
@@ -307,7 +308,7 @@ def test_off_loads_as_mode_off_quoted_or_not(spelling: str) -> None:
     policy = parse_policy(
         text.replace(budget, f"budget: {{input: {spelling}, tool_result: block}}")
     )
-    assert policy.check_config("budget").modes[Checkpoint.input] == Mode.off
+    assert policy.check_config("budget").modes[Checkpoint.INPUT] == Mode.OFF
 
 
 @pytest.mark.parametrize("word", ["on", "off", "yes", "no", "On", "NO"])
@@ -318,7 +319,7 @@ def test_yaml_11_bool_words_stay_strings(word: str) -> None:
 
 def test_true_and_false_stay_booleans() -> None:
     errors = _text_errors(POLICY_FILE.read_text().replace('version: "0.1"', "version: true"))
-    assert [e["loc"] for e in errors] == ["version"]
+    assert [e.loc for e in errors] == ["version"]
 
 
 # --- Jev never judges text nothing redacted (constitution V) ------------------------------------
@@ -328,9 +329,9 @@ def test_jev_on_where_pii_is_off_is_rejected() -> None:
     errors = _errors(lambda r: r["checks"]["pii_secrets"].update(input="off"))
 
     # strict and permissive override pii_secrets at input, so only balanced is affected.
-    [err] = [e for e in errors if e["loc"] == "checks.pii_secrets.input"]
-    assert "jev" in err["msg"] and "balanced" in err["msg"]
-    assert "strict" not in err["msg"] and "permissive" not in err["msg"]
+    [err] = [e for e in errors if e.loc == "checks.pii_secrets.input"]
+    assert "jev" in err.msg and "balanced" in err.msg
+    assert "strict" not in err.msg and "permissive" not in err.msg
 
 
 def test_profile_turning_pii_off_under_jev_is_rejected() -> None:
@@ -338,8 +339,8 @@ def test_profile_turning_pii_off_under_jev_is_rejected() -> None:
         lambda r: r["profiles"]["permissive"]["checks"]["pii_secrets"].update(tool_result="off")
     )
 
-    [err] = [e for e in errors if e["loc"] == "profiles.permissive.checks.pii_secrets.tool_result"]
-    assert "jev" in err["msg"] and "permissive" in err["msg"]
+    [err] = [e for e in errors if e.loc == "profiles.permissive.checks.pii_secrets.tool_result"]
+    assert "jev" in err.msg and "permissive" in err.msg
 
 
 def test_profile_turning_jev_on_where_pii_is_off_is_rejected() -> None:
@@ -352,9 +353,9 @@ def test_profile_turning_jev_on_where_pii_is_off_is_rejected() -> None:
 
     errors = _errors(mutate)
 
-    [err] = [e for e in errors if e["loc"] == "checks.pii_secrets.output"]
-    assert "permissive" in err["msg"]
-    assert "balanced" not in err["msg"] and "strict" not in err["msg"]
+    [err] = [e for e in errors if e.loc == "checks.pii_secrets.output"]
+    assert "permissive" in err.msg
+    assert "balanced" not in err.msg and "strict" not in err.msg
 
 
 def test_jev_and_pii_both_off_is_allowed() -> None:
@@ -366,4 +367,4 @@ def test_jev_and_pii_both_off_is_allowed() -> None:
         del r["profiles"]["strict"]["checks"]["pii_secrets"]["output"]
 
     policy = _accepts(mutate)
-    assert policy.mode("jev", Checkpoint.output) == Mode.off
+    assert policy.mode("jev", Checkpoint.OUTPUT) == Mode.OFF

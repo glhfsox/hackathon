@@ -6,9 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from app.audit import MemoryAuditSink
 from app.models import AuditRecord
-from app.sinks import COLUMNS, FanoutAuditSink, JsonlAuditSink, audit_row, read_jsonl
+from app.observability.sinks import (
+    COLUMNS,
+    FanoutAuditSink,
+    JsonlAuditSink,
+    MemoryAuditSink,
+    audit_row,
+    read_jsonl,
+)
 
 
 def rec(ts: str = "2026-10-03T12:34:56.789+00:00", **kw) -> AuditRecord:
@@ -190,7 +196,7 @@ async def test_restart_after_torn_line_keeps_the_new_row_intact(
     raw = path.read_text(encoding="utf-8").splitlines()
     assert raw[2] == '{"id":3,"ts":"2026-10-03T12:'
     assert json.loads(raw[3])["id"] == 3
-    with caplog.at_level(logging.WARNING, logger="app.sinks"):
+    with caplog.at_level(logging.WARNING, logger="app.observability.sinks"):
         records = read_jsonl(tmp_path)
     assert [r.id for r in records] == [1, 2, 3]
     assert records[-1].reason == "after the crash"
@@ -268,7 +274,7 @@ async def test_read_jsonl_skips_a_partial_trailing_line_silently(
     with (tmp_path / "audit-2026-10-03.jsonl").open("a", encoding="utf-8") as f:
         f.write('{"id":3,"ts":"2026-10-03T1')  # a row still being written
 
-    with caplog.at_level(logging.WARNING, logger="app.sinks"):
+    with caplog.at_level(logging.WARNING, logger="app.observability.sinks"):
         records = read_jsonl(tmp_path)
     assert [r.id for r in records] == [1, 2]
     assert caplog.text == ""
@@ -304,7 +310,7 @@ async def test_secondary_failure_is_logged_and_isolated(caplog: pytest.LogCaptur
     primary, failing, other = MemoryAuditSink(), FailingSink(), MemoryAuditSink()
     fanout = FanoutAuditSink([primary, failing, other])
 
-    with caplog.at_level(logging.ERROR, logger="app.sinks"):
+    with caplog.at_level(logging.ERROR, logger="app.observability.sinks"):
         await fanout.write(rec(request_id="req-42"))
         await fanout.write(rec(request_id="req-43"))
 

@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
+from app.core.policy_store import parse_policy
 from app.models import AuditRecord
-from app.policy import Policy
-from app.policy_store import parse_policy
-from app.sinks import COLUMNS, JsonlAuditSink
-from app.stats import (
+from app.models.policy import Policy
+from app.observability.sinks import COLUMNS, JsonlAuditSink
+from app.observability.stats import (
     HISTORY_FILE,
     LATEST_FILE,
     StatsExporter,
@@ -147,7 +147,7 @@ async def test_exporter_survives_a_failed_export(
         return policy
 
     exporter = StatsExporter(tmp_path, flaky_policy, interval_s=0.01)
-    with caplog.at_level(logging.ERROR, logger="app.stats"):
+    with caplog.at_level(logging.ERROR, logger="app.observability.stats"):
         exporter.start()
         try:
             await _wait_for(tmp_path / LATEST_FILE)
@@ -289,7 +289,15 @@ async def test_cli_runs_as_a_module(tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     await _write_logs(logs)
     result = subprocess.run(
-        [sys.executable, "-m", "app.stats", "--logs", str(logs), "--policy", str(POLICY_PATH)],
+        [
+            sys.executable,
+            "-m",
+            "app.observability.stats",
+            "--logs",
+            str(logs),
+            "--policy",
+            str(POLICY_PATH),
+        ],
         cwd=BACKEND_DIR,
         capture_output=True,
         text=True,

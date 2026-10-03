@@ -43,7 +43,7 @@ def _normalize(value: Any) -> Any:
 class LoopDetectionCheck:
     id = "loop_detection"
     cost_rank = 3
-    checkpoints = frozenset({Checkpoint.input, Checkpoint.tool_result})
+    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

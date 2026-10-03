@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sinks import read_jsonl
+from app.observability.sinks import read_jsonl
 from demo import tools
 from demo.agent import AgentEvent
 from demo.agents import run_orchestrator, run_worker

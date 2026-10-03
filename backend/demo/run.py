@@ -34,8 +34,8 @@ import openai
 import uvicorn
 import yaml
 
-from app.policy import Policy
-from app.policy_store import parse_policy
+from app.core.policy_store import parse_policy
+from app.models.policy import Policy
 from demo import tools
 from demo.agent import AgentEvent, AgentResult
 from demo.agents import DEFAULT_MODEL, run_orchestrator, run_worker

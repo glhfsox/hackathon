@@ -21,10 +21,10 @@ import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.audit import AuditSink
 from app.checks.base import Signature
 from app.models import Action, AuditRecord
-from app.policy import SignatureFeedConfig
+from app.models.policy import SignatureFeedConfig
+from app.protocols.audit import AuditSink
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class SignatureFeed:
         self._signatures, self.version, self._fingerprint = signatures, version, fingerprint
         reason = f"signature feed {cfg.source} version {version}: {len(signatures)} signatures"
         logger.info(reason)
-        await _audit(audit, "signature_feed_updated", Action.allow, reason, policy_version)
+        await _audit(audit, "signature_feed_updated", Action.ALLOW, reason, policy_version)
 
     async def _failed(self, error: str, audit: AuditSink | None, policy_version: str) -> None:
         if self._signatures is None:
@@ -204,7 +204,7 @@ class SignatureFeed:
             return
         self._last_error = error
         await _audit(
-            audit, "signature_feed_failed", Action.flag, f"{error}; {kept}", policy_version
+            audit, "signature_feed_failed", Action.FLAG, f"{error}; {kept}", policy_version
         )
 
 

@@ -40,7 +40,7 @@ from typing import Any
 
 from langfuse import Langfuse, propagate_attributes
 
-from app.metrics import AI_CHECK, SYSTEM_EVENTS
+from app.core.metrics import AI_CHECK, SYSTEM_EVENTS
 from app.models import TURN_SUMMARY, Action, AuditRecord, DecidedBy
 
 log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ SYSTEM_EVENT_TAG = "system_event"
 # The SDK's own default host, used when neither LANGFUSE_HOST nor LANGFUSE_BASE_URL is set.
 LANGFUSE_CLOUD_URL = "https://cloud.langfuse.com"
 
-_LEVEL = {Action.block: "ERROR", Action.flag: "WARNING"}
+_LEVEL = {Action.BLOCK: "ERROR", Action.FLAG: "WARNING"}
 
 
 def _tags(record: AuditRecord, system_event: bool) -> list[str]:
@@ -60,9 +60,9 @@ def _tags(record: AuditRecord, system_event: bool) -> list[str]:
         # The blocking check row already tags the trace.
         return []
     tags = [SYSTEM_EVENT_TAG] if system_event else []
-    if record.action != Action.allow:
+    if record.action != Action.ALLOW:
         tags.append(record.action.value)
-    if record.action == Action.block and not system_event:
+    if record.action == Action.BLOCK and not system_event:
         tags.append(f"{BLOCK_SCORE}:{record.check}")
     return tags
 
@@ -113,7 +113,7 @@ class LangfuseAuditSink:
             observation = self._client.start_observation(as_type="guardrail", **common)
         observation.end(end_time=time.time_ns() + int(record.latency_ms * 1_000_000))
 
-        if record.check == AI_CHECK and record.decided_by != DecidedBy.rules:
+        if record.check == AI_CHECK and record.decided_by != DecidedBy.RULES:
             # decided_by rules means Jev gave no verdict (unavailable, nothing to judge): no risk.
             self._client.create_score(
                 name=JEV_SCORE,
@@ -123,7 +123,7 @@ class LangfuseAuditSink:
                 data_type="NUMERIC",
                 comment=f"{name} ({record.decided_by.value}): {record.reason}",
             )
-        if record.action == Action.block:
+        if record.action == Action.BLOCK:
             self._client.create_score(
                 name=BLOCK_SCORE,
                 value=record.check,

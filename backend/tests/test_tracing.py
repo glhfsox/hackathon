@@ -9,15 +9,14 @@ from typing import Any
 import pytest
 from langfuse import Langfuse
 
-import app.tracing
-from app.audit import MemoryAuditSink
+import app.observability.tracing
 from app.checks.jev import CHECK as JEV
 from app.checks.pii_secrets import CHECK as PII
+from app.core.pipeline import run_checkpoint
+from app.core.policy_store import parse_policy
 from app.models import AuditRecord, CanonicalRequest, Checkpoint, Message
-from app.pipeline import run_checkpoint
-from app.policy_store import parse_policy
-from app.sinks import FanoutAuditSink
-from app.tracing import LangfuseAuditSink, build_langfuse_sink
+from app.observability.sinks import FanoutAuditSink, MemoryAuditSink
+from app.observability.tracing import LangfuseAuditSink, build_langfuse_sink
 from tests.conftest import FakeJudge
 
 POLICY_PATH = Path(__file__).resolve().parents[1] / "policy.yaml"
@@ -318,7 +317,7 @@ async def test_no_message_content_reaches_langfuse(
         request_id="req-private",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.input,
+        checkpoint=Checkpoint.INPUT,
         messages=[Message(role="user", content=" ".join(secrets))],
     )
     memory = MemoryAuditSink()
@@ -371,7 +370,7 @@ def test_build_returns_none_without_keys(
     def no_client(**kwargs: Any) -> None:
         raise AssertionError("no Langfuse client may be created without keys")
 
-    monkeypatch.setattr(app.tracing, "Langfuse", no_client)
+    monkeypatch.setattr(app.observability.tracing, "Langfuse", no_client)
     assert build_langfuse_sink() is None
 
 
@@ -385,7 +384,7 @@ def test_build_with_keys_uses_the_host(monkeypatch: pytest.MonkeyPatch, no_netwo
 
         create_trace_id = staticmethod(Langfuse.create_trace_id)
 
-    monkeypatch.setattr(app.tracing, "Langfuse", RecordingLangfuse)
+    monkeypatch.setattr(app.observability.tracing, "Langfuse", RecordingLangfuse)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)

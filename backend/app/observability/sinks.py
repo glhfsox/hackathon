@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.audit import AuditSink
-from app.metrics import AI_CHECK, SYSTEM_EVENTS
+from app.core.metrics import AI_CHECK, SYSTEM_EVENTS
 from app.models import Action, AuditRecord
+from app.protocols.audit import AuditSink
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ _JEV_CATEGORIES = re.compile(r"\[([^\[\]]+)\]\s*$")
 
 def _utc(ts: str) -> datetime:
     dt = datetime.fromisoformat(ts)
-    # Same rule as app.metrics: the audit log writes UTC, a naive timestamp is read as UTC.
+    # Same rule as app.core.metrics: the audit log writes UTC, a naive timestamp is read as UTC.
     return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
@@ -74,10 +74,10 @@ def audit_row(record: AuditRecord) -> dict[str, Any]:
         hour=ts.hour,
         # Same format as the `timeline` minutes of GET /api/metrics, so the two can be joined.
         minute=ts.strftime("%Y-%m-%dT%H:%M:00Z"),
-        is_block=record.action == Action.block,
-        is_redact=record.action == Action.redact,
-        is_flag=record.action == Action.flag,
-        # Same rule as app.metrics: a known system-event id, or no checkpoint.
+        is_block=record.action == Action.BLOCK,
+        is_redact=record.action == Action.REDACT,
+        is_flag=record.action == Action.FLAG,
+        # Same rule as app.core.metrics: a known system-event id, or no checkpoint.
         is_system_event=record.check in SYSTEM_EVENTS or record.checkpoint is None,
         category=_category(record),
     )
@@ -255,3 +255,12 @@ def read_jsonl(directory: Path, since: str | None = None) -> list[AuditRecord]:
             continue
         records.extend(r for r in _read_file(path) if since_dt is None or _utc(r.ts) >= since_dt)
     return records
+
+
+class MemoryAuditSink:
+    def __init__(self) -> None:
+        self.records: list[AuditRecord] = []
+
+    async def write(self, record: AuditRecord) -> None:
+        record.id = len(self.records) + 1
+        self.records.append(record)

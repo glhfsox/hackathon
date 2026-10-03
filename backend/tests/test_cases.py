@@ -17,12 +17,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 import app.checks
-from app.audit import MemoryAuditSink
-from app.budget import UsageLedger
 from app.checks.base import Check, Signature
+from app.core.budget import UsageLedger
+from app.core.pipeline import run_checkpoint
 from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolDef
-from app.pipeline import run_checkpoint
-from app.policy import Policy
+from app.models.policy import Policy
+from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -121,9 +121,9 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_signatures(policy: Policy) -> list[Signature] | None:
-    if policy.signatures is None or importlib.util.find_spec("app.signatures") is None:
+    if policy.signatures is None or importlib.util.find_spec("app.core.signatures") is None:
         return None
-    from app.signatures import load_signatures
+    from app.core.signatures import load_signatures
 
     signatures, _version = load_signatures(policy.signatures.source, base_dir=BACKEND_DIR)
     return signatures
@@ -181,7 +181,7 @@ async def test_case(raw: dict[str, Any]) -> None:
     exp = case.expect
     assert decision.action == exp.action, trace
     if exp.check is not None:
-        if exp.action == Action.block:
+        if exp.action == Action.BLOCK:
             assert decision.blocked_by == exp.check, trace
         assert any(r.check == exp.check and r.action == exp.action for r in decision.results), trace
     if exp.reason_contains is not None:

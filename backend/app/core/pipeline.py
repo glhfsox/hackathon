@@ -9,11 +9,10 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from app.audit import AuditSink
-from app.budget import UsageLedger
 from app.checks import ordered_checks
 from app.checks.base import (
     REPLY_INDEX,
@@ -23,6 +22,7 @@ from app.checks.base import (
     Signature,
     make_result,
 )
+from app.core.budget import UsageLedger
 from app.models import (
     TURN_SUMMARY,
     Action,
@@ -34,21 +34,23 @@ from app.models import (
     Decision,
     Message,
     Mode,
+    PolicySnapshot,
     Redaction,
     Usage,
     Verdict,
 )
-from app.policy import Caller, Policy
+from app.models.policy import Caller, Policy
+from app.protocols.audit import AuditSink
 
 logger = logging.getLogger(__name__)
 
 # Used when a check's policy section sets no timeout_s.
 DEFAULT_TIMEOUT_S = 10.0
 
-_STRENGTH = {Action.allow: 0, Action.flag: 1, Action.redact: 2, Action.block: 3}
+_STRENGTH = {Action.ALLOW: 0, Action.FLAG: 1, Action.REDACT: 2, Action.BLOCK: 3}
 # Usage is only known once the upstream has answered, i.e. on the reply checkpoints.
-_USAGE_CHECKPOINTS = {Checkpoint.tool_call, Checkpoint.output}
-_PAST = {Action.block: "blocked", Action.redact: "redacted", Action.flag: "flagged"}
+_USAGE_CHECKPOINTS = {Checkpoint.TOOL_CALL, Checkpoint.OUTPUT}
+_PAST = {Action.BLOCK: "blocked", Action.REDACT: "redacted", Action.FLAG: "flagged"}
 # Hex digits of the conversation hash: 64 bits, so distinct sessions practically never collide.
 _CONVERSATION_ID_LEN = 16
 
@@ -67,25 +69,25 @@ def conversation_id(caller_id: str, messages: list[Message]) -> str:
 
 def detect_request_checkpoint(messages: list[Message]) -> Checkpoint:
     if messages and messages[-1].role == "tool":
-        return Checkpoint.tool_result
-    return Checkpoint.input
+        return Checkpoint.TOOL_RESULT
+    return Checkpoint.INPUT
 
 
 def detect_reply_checkpoint(reply: Message) -> Checkpoint:
-    return Checkpoint.tool_call if reply.tool_calls else Checkpoint.output
+    return Checkpoint.TOOL_CALL if reply.tool_calls else Checkpoint.OUTPUT
 
 
 def apply_mode(verdict: Verdict, mode: Mode) -> Action:
     """The mode table of docs/architecture.md §4. Errors fail closed outside monitor mode."""
-    if mode == Mode.off:
+    if mode == Mode.OFF:
         raise ValueError("mode 'off' is never applied: the pipeline skips the check")
     if verdict == "allow":
-        return Action.allow
-    if mode == Mode.monitor:
-        return Action.flag
+        return Action.ALLOW
+    if mode == Mode.MONITOR:
+        return Action.FLAG
     # In block mode a finding stops the request even when it could be redacted: that is what
     # makes `strict` stricter than `balanced` for PII.
-    return Action.redact if verdict == "redact" and mode == Mode.redact else Action.block
+    return Action.REDACT if verdict == "redact" and mode == Mode.REDACT else Action.BLOCK
 
 
 def apply_redactions(request: CanonicalRequest, redactions: list[Redaction]) -> CanonicalRequest:
@@ -223,7 +225,7 @@ async def run_checkpoint(
         if checkpoint not in check.checkpoints:
             continue
         mode = policy.mode(check.id, checkpoint)
-        if mode == Mode.off:
+        if mode == Mode.OFF:
             continue
         # A copy, so a check cannot change the policy snapshot other requests share.
         settings = dict(policy.check_config(check.id).params)
@@ -232,7 +234,7 @@ async def run_checkpoint(
         if result.redactions:
             try:
                 checked = apply_redactions(checked, result.redactions)
-                if result.action == Action.redact:
+                if result.action == Action.REDACT:
                     touched = {r.message_index for r in result.redactions}
                     forwarded = _copy_contents(forwarded, checked, touched)
             except ValueError as exc:
@@ -249,11 +251,11 @@ async def run_checkpoint(
                 result.action = apply_mode("error", mode)
         results.append(result)
         await audit.write(_audit_record(request, result, policy_version))
-        if result.action == Action.block:
+        if result.action == Action.BLOCK:
             blocked_by = check.id
             break
 
-    action = max((r.action for r in results), key=_STRENGTH.__getitem__, default=Action.allow)
+    action = max((r.action for r in results), key=_STRENGTH.__getitem__, default=Action.ALLOW)
     decision = Decision(
         request_id=request.request_id,
         checkpoint=checkpoint,
@@ -321,7 +323,7 @@ def _turn_summary(
 ) -> AuditRecord:
     """The agent and economic fact row of one checkpoint (backend/docs/observability.md)."""
     results = decision.results
-    if decision.action == Action.allow:
+    if decision.action == Action.ALLOW:
         reason = "allowed" if results else "allowed: no check enabled at this checkpoint"
     else:
         by = ", ".join(r.check for r in results if r.action == decision.action)
@@ -349,7 +351,7 @@ def _turn_summary(
         score=max((r.score for r in results), default=0.0),
         latency_ms=overhead,
         # A block stops the pipeline, so the blocking result is the last one.
-        decided_by=results[-1].decided_by if decision.blocked_by else DecidedBy.rules,
+        decided_by=results[-1].decided_by if decision.blocked_by else DecidedBy.RULES,
         tokens=tokens,
         cost=cost,
         policy_version=policy_version,
@@ -365,3 +367,48 @@ def _turn_summary(
         overhead_ms=overhead,
         blocked_by=decision.blocked_by,
     )
+
+
+class Pipeline:
+    """The check pipeline bound to the application's long-lived dependencies.
+
+    The proxy and the tool guard call `run` once per checkpoint with the policy snapshot the
+    request took at its start, so a hot reload never mixes two policy versions in one request.
+    """
+
+    def __init__(
+        self,
+        *,
+        audit: AuditSink,
+        ledger: UsageLedger | None = None,
+        signatures: Callable[[], list[Signature] | None] | None = None,
+        judge: Judge | None = None,
+        checks: list[Check] | None = None,
+    ) -> None:
+        self._audit = audit
+        self._ledger = ledger
+        self._signatures = signatures
+        self._judge = judge
+        self._checks = checks
+
+    async def run(
+        self,
+        request: CanonicalRequest,
+        snapshot: PolicySnapshot,
+        caller: Caller,
+        *,
+        usage: Usage | None = None,
+    ) -> tuple[Decision, CanonicalRequest]:
+        """The decision for `request.checkpoint` and the request to forward (redactions applied)."""
+        return await run_checkpoint(
+            request,
+            snapshot.policy,
+            snapshot.version,
+            caller,
+            ledger=self._ledger,
+            signatures=self._signatures() if self._signatures is not None else None,
+            judge=self._judge,
+            audit=self._audit,
+            checks=self._checks,
+            usage=usage,
+        )

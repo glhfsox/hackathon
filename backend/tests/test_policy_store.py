@@ -7,16 +7,16 @@ import copy
 import logging
 import os
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-from app.audit import MemoryAuditSink
+from app.core.policy_store import PolicyStore
 from app.models import Action, AuditRecord
-from app.policy_store import PolicyError, PolicyStore
+from app.observability.sinks import MemoryAuditSink
+from app.protocols.policy_provider import PolicyRejectedError
 
 DEV_POLICY = yaml.safe_load((Path(__file__).parent.parent / "policy.yaml").read_text())
 
@@ -40,7 +40,7 @@ def _write(path: Path, text: str) -> None:
 
 def _mentions(errors: list[dict[str, str]], needle: str) -> bool:
     """The error points at `needle` by loc or, for cross-field errors, by message."""
-    return any(e["loc"].startswith(needle) or needle in e["msg"] for e in errors)
+    return any(e.loc.startswith(needle) or needle in e.msg for e in errors)
 
 
 def _set(path: list[str], value: Any) -> Callable[[dict[str, Any]], None]:
@@ -149,15 +149,15 @@ async def test_initial_load(policy_path: Path, audit: MemoryAuditSink) -> None:
     assert store.current() is loaded
     assert loaded.policy.active_profile == "balanced"
     assert loaded.path == policy_path
-    assert loaded.yaml_text == policy_path.read_text()
+    assert loaded.yaml == policy_path.read_text()
     prefix, digest = loaded.version.split("+")
     assert prefix == "0.1" and len(digest) == 8
-    assert datetime.fromisoformat(loaded.loaded_at).utcoffset().total_seconds() == 0
+    assert loaded.loaded_at.utcoffset().total_seconds() == 0
     assert len(audit.records) == 1
     rec = _last(audit)
     assert (rec.check, rec.action, rec.policy_version) == (
         "policy_loaded",
-        Action.allow,
+        Action.ALLOW,
         loaded.version,
     )
     assert loaded.version in rec.reason
@@ -221,10 +221,10 @@ async def test_loaded_audit_row_names_checks_that_are_off(
     mutate: Callable[[dict[str, Any]], None],
     expected: str,
 ) -> None:
-    loaded = await store.replace(_policy_yaml(mutate))
+    loaded = await store.save(_policy_yaml(mutate))
 
     rec = _last(audit)
-    assert (rec.check, rec.action) == ("policy_loaded", Action.allow)
+    assert (rec.check, rec.action) == ("policy_loaded", Action.ALLOW)
     assert rec.reason == f"policy {loaded.version} loaded (api); {expected}"
 
 
@@ -234,7 +234,7 @@ async def test_invalid_initial_load_raises(
 ) -> None:
     policy_path.write_text(text)
     store = PolicyStore(policy_path, audit)
-    with pytest.raises(PolicyError) as exc:
+    with pytest.raises(PolicyRejectedError) as exc:
         await store.load_initial()
     assert exc.value.errors
     assert _last(audit).check == "policy_rejected"
@@ -243,7 +243,7 @@ async def test_invalid_initial_load_raises(
 
 
 async def test_missing_initial_file_raises(tmp_path: Path, audit: MemoryAuditSink) -> None:
-    with pytest.raises(PolicyError, match="cannot read"):
+    with pytest.raises(PolicyRejectedError, match="cannot read"):
         await PolicyStore(tmp_path / "absent.yaml", audit).load_initial()
 
 
@@ -260,7 +260,7 @@ async def test_valid_edit_picked_up_by_poll(
     rec = _last(audit)
     assert (rec.check, rec.action, rec.policy_version) == (
         "policy_loaded",
-        Action.allow,
+        Action.ALLOW,
         new.version,
     )
     # Nothing changed since: no reload, no audit.
@@ -277,7 +277,7 @@ async def test_invalid_edit_rejected_old_policy_kept(
 ) -> None:
     old = store.current()
     errors = store.validate(text)
-    assert errors and all(set(e) == {"loc", "msg"} for e in errors)
+    assert errors and all(set(e.model_dump()) == {"loc", "msg"} for e in errors)
     assert _mentions(errors, points_at), errors
 
     _write(policy_path, text)
@@ -287,7 +287,7 @@ async def test_invalid_edit_rejected_old_policy_kept(
     rec = _last(audit)
     assert (rec.check, rec.action, rec.policy_version) == (
         "policy_rejected",
-        Action.block,
+        Action.BLOCK,
         old.version,
     )
     assert points_at in rec.reason
@@ -356,7 +356,7 @@ async def test_half_written_or_missing_file_keeps_old_policy(
 async def test_replace_writes_file_and_swaps(
     store: PolicyStore, policy_path: Path, audit: MemoryAuditSink
 ) -> None:
-    loaded = await store.replace(VALID_STRICT)
+    loaded = await store.save(VALID_STRICT)
 
     assert policy_path.read_bytes() == VALID_STRICT.encode("utf-8")
     assert store.current() is loaded
@@ -377,8 +377,8 @@ async def test_replace_invalid_leaves_file_untouched(
     old = store.current()
     before = policy_path.read_bytes()
 
-    with pytest.raises(PolicyError) as exc:
-        await store.replace(text)
+    with pytest.raises(PolicyRejectedError) as exc:
+        await store.save(text)
 
     assert exc.value.errors
     assert policy_path.read_bytes() == before
@@ -386,7 +386,7 @@ async def test_replace_invalid_leaves_file_untouched(
     rec = _last(audit)
     assert (rec.check, rec.action, rec.policy_version) == (
         "policy_rejected",
-        Action.block,
+        Action.BLOCK,
         old.version,
     )
     assert list(policy_path.parent.iterdir()) == [policy_path]
@@ -407,8 +407,8 @@ async def test_validate_has_no_side_effects(
 
 async def test_version_tracks_content(store: PolicyStore) -> None:
     initial = store.current().version
-    strict = (await store.replace(VALID_STRICT)).version
-    back = (await store.replace(_policy_yaml())).version
+    strict = (await store.save(VALID_STRICT)).version
+    back = (await store.save(_policy_yaml())).version
 
     assert strict != initial
     assert back == initial
@@ -417,7 +417,7 @@ async def test_version_tracks_content(store: PolicyStore) -> None:
 
 async def test_snapshot_survives_swap(store: PolicyStore) -> None:
     snapshot = store.current()
-    await store.replace(VALID_STRICT)
+    await store.save(VALID_STRICT)
 
     assert snapshot.policy.active_profile == "balanced"
     assert snapshot.version != store.current().version

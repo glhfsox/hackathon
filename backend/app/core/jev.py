@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.checks.base import JudgeUnavailable
 from app.models import JudgeInput, JudgeVerdict
-from app.policy import JevConfig, JevFallback
+from app.models.policy import JevConfig, JevFallback
 
 log = logging.getLogger(__name__)
 

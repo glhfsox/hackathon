@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 
 from app.checks import get_check
 from app.checks.base import CheckContext
+from app.core.pipeline import apply_redactions
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
-from app.pipeline import apply_redactions
 from demo import tools
 from tests.demo.conftest import DEMO_KEY, FakeUpstream, bridged_client
 
@@ -38,7 +38,7 @@ async def test_every_fake_pii_value_is_detected_by_pii_secrets() -> None:
         request_id="r1",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.tool_result,
+        checkpoint=Checkpoint.TOOL_RESULT,
         messages=[
             Message(role="user", content="list customers"),
             Message(role="assistant", tool_calls=[ToolCall(id="c1", name="query_customers")]),

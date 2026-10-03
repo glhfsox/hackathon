@@ -522,7 +522,7 @@ def _strings(arguments: dict[str, Any]) -> Iterator[tuple[str, str, str]]:
 class ToolArgsCheck:
     id = "tool_args"
     cost_rank = 5
-    checkpoints = frozenset({Checkpoint.tool_call})
+    checkpoints = frozenset({Checkpoint.TOOL_CALL})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

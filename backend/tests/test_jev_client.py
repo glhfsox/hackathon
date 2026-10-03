@@ -10,10 +10,10 @@ import respx
 
 from app.checks.base import CheckContext, JudgeUnavailable
 from app.checks.jev import CHECK as JEV_CHECK
-from app.jev import JevClient, MockJudge
+from app.core.jev import JevClient, MockJudge
+from app.core.signatures import load_signatures
 from app.models import CanonicalRequest, Checkpoint, JudgeInput, JudgeVerdict, Message
-from app.policy import JevConfig
-from app.signatures import load_signatures
+from app.models.policy import JevConfig
 
 KEY_ENV = "TEST_JEV_CLIENT_KEY"
 JEV_URL = "https://jev.test/v1/systemone"
@@ -41,7 +41,7 @@ CONTEXT = "caller role: developer; offered tools: query_customers"
 
 def _inp(
     text: str = INJECTION,
-    checkpoint: Checkpoint = Checkpoint.tool_result,
+    checkpoint: Checkpoint = Checkpoint.TOOL_RESULT,
     context: str = CONTEXT,
 ) -> JudgeInput:
     return JudgeInput(checkpoint=checkpoint, text=text, context=context)
@@ -375,7 +375,7 @@ async def test_both_down_raises_with_both_errors(key, http, mock, caplog):
     mock.post(JEV_URL).mock(return_value=httpx.Response(500))
     mock.post(FB_URL).mock(side_effect=httpx.ConnectError("connection refused"))
 
-    with caplog.at_level(logging.WARNING, logger="app.jev"):
+    with caplog.at_level(logging.WARNING, logger="app.core.jev"):
         with pytest.raises(JudgeUnavailable) as err:
             await JevClient(_cfg(), http).judge(_inp())
 
@@ -490,7 +490,7 @@ async def test_fallback_verdict_is_cached_and_keeps_decided_by(no_key, http, moc
     "other",
     [
         _inp("a different text"),
-        _inp(checkpoint=Checkpoint.input),
+        _inp(checkpoint=Checkpoint.INPUT),
         _inp(context="caller role: support; offered tools: none"),
     ],
     ids=["text", "checkpoint", "context"],
@@ -770,7 +770,7 @@ async def _all_reasons(http, mock, monkeypatch) -> list[str]:
         request_id="r",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.input,
+        checkpoint=Checkpoint.INPUT,
         messages=[Message(role="user", content="hi")],
     )
     for v in verdicts:

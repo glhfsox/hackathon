@@ -2,17 +2,17 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.budget import UsageLedger
 from app.checks.base import CheckContext
 from app.checks.budget import CHECK
+from app.core.budget import UsageLedger
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 
 
 def _request(
-    caller_id: str = "demo", checkpoint: Checkpoint = Checkpoint.input
+    caller_id: str = "demo", checkpoint: Checkpoint = Checkpoint.INPUT
 ) -> CanonicalRequest:
     messages = [Message(role="user", content="hi")]
-    if checkpoint == Checkpoint.tool_result:
+    if checkpoint == Checkpoint.TOOL_RESULT:
         # [user, assistant(tool_calls), tool]: what the agent sends after running a tool.
         messages += [
             Message(role="assistant", tool_calls=[ToolCall(id="1", name="query_customers")]),
@@ -45,7 +45,7 @@ def test_metadata():
     assert CHECK.id == "budget"
     assert CHECK.cost_rank == 2
     # tool_result requests are forwarded upstream too, so they must pass the budget.
-    assert CHECK.checkpoints == frozenset({Checkpoint.input, Checkpoint.tool_result})
+    assert CHECK.checkpoints == frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT})
 
 
 async def test_exhausted_budget_blocks_at_tool_result():
@@ -55,9 +55,9 @@ async def test_exhausted_budget_blocks_at_tool_result():
         cost_per_day=0.5,
         ledger=_ledger(requests=30, tokens=50000, cost=0.5, caller="support"),
     )
-    result = await CHECK.run(_request("support", Checkpoint.tool_result), {}, ctx)
+    result = await CHECK.run(_request("support", Checkpoint.TOOL_RESULT), {}, ctx)
     assert result.verdict == "block"
-    assert result.checkpoint == Checkpoint.tool_result
+    assert result.checkpoint == Checkpoint.TOOL_RESULT
     assert "requests_per_minute exhausted: 30/30" in result.reason
     assert "tokens_per_day exhausted: 50000/50000" in result.reason
     assert "cost_per_day exhausted: 0.5/0.5" in result.reason
@@ -65,7 +65,7 @@ async def test_exhausted_budget_blocks_at_tool_result():
 
 async def test_within_budget_allows_at_tool_result():
     ctx = CheckContext(requests_per_minute=30, ledger=_ledger(requests=29, caller="support"))
-    result = await CHECK.run(_request("support", Checkpoint.tool_result), {}, ctx)
+    result = await CHECK.run(_request("support", Checkpoint.TOOL_RESULT), {}, ctx)
     assert result.verdict == "allow"
 
 

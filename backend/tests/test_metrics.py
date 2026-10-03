@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.metrics import compute_metrics, percentile
+from app.core.metrics import compute_metrics, percentile
 from app.models import AuditRecord
-from app.policy import Policy
+from app.models.policy import Policy
 
 NOW = datetime(2026, 10, 3, 12, 30, tzinfo=UTC)
 

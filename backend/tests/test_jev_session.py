@@ -17,13 +17,13 @@ import pytest
 import respx
 import yaml
 
-from app.audit import MemoryAuditSink
 from app.checks.jev import CHECK as JEV_CHECK
-from app.jev import JevClient
+from app.core.jev import JevClient
+from app.core.pipeline import run_checkpoint
+from app.core.policy_store import parse_policy
 from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef
-from app.pipeline import run_checkpoint
-from app.policy import Policy
-from app.policy_store import parse_policy
+from app.models.policy import Policy
+from app.observability.sinks import MemoryAuditSink
 
 POLICY_FILE = Path(__file__).resolve().parents[1] / "policy.yaml"
 TOOLS = [ToolDef(name="query_customers", description="look up customers by city")]
@@ -110,23 +110,23 @@ async def test_long_benign_session_is_allowed_and_pays_only_for_new_messages(set
         before = jev.calls
         decision = await _step(policy, client, checkpoint, messages, reply)
         trace = [(r.check, r.verdict, r.reason) for r in decision.results]
-        assert decision.action == Action.allow, (len(messages), trace)
+        assert decision.action == Action.ALLOW, (len(messages), trace)
         assert jev.calls - before == new, (len(messages), checkpoint)
         steps += 1
 
     turn = 0
     while len(messages) < 60:
         messages.append(Message(role="user", content=f"Turn {turn}: customers in city {turn}?"))
-        await step(Checkpoint.input, new=1)  # the dev policy does not send system to Jev
+        await step(Checkpoint.INPUT, new=1)  # the dev policy does not send system to Jev
         if turn % 2 == 0:
             call = ToolCall(id=f"c{turn}", name="query_customers", arguments={"city": turn})
             messages.append(Message(role="assistant", tool_calls=[call]))
             messages.append(
                 Message(role="tool", content=f"{turn} rows for city {turn}", tool_call_id=call.id)
             )
-            await step(Checkpoint.tool_result, new=1)
+            await step(Checkpoint.TOOL_RESULT, new=1)
         reply = Message(role="assistant", content=f"City {turn} has {turn} customers.")
-        await step(Checkpoint.output, reply, new=1)
+        await step(Checkpoint.OUTPUT, reply, new=1)
         messages.append(reply)
         turn += 1
 
@@ -149,18 +149,18 @@ async def test_identical_tool_results_cost_one_call(policy, setup):
         Message(role="tool", content="ok", tool_call_id="c1"),
     ]
 
-    decision = await _step(policy, client, Checkpoint.tool_result, messages)
+    decision = await _step(policy, client, Checkpoint.TOOL_RESULT, messages)
 
-    assert decision.action == Action.allow and jev.calls == 2
+    assert decision.action == Action.ALLOW and jev.calls == 2
 
 
 async def test_one_request_with_too_much_new_text_fails_closed(policy, setup):
     jev, fallback, client = setup
     messages = [Message(role="user", content=f"note {i}: nothing special") for i in range(200)]
 
-    decision = await _step(policy, client, Checkpoint.input, messages)
+    decision = await _step(policy, client, Checkpoint.INPUT, messages)
 
-    assert decision.action == Action.block and decision.blocked_by == "jev"
+    assert decision.action == Action.BLOCK and decision.blocked_by == "jev"
     (result,) = decision.results
     assert result.verdict == "error"
     assert result.reason == (
@@ -174,7 +174,7 @@ async def test_jev_calls_never_exceed_max_concurrency(policy, setup):
     limit = policy.check_config("jev").params.get("max_concurrency", 8)
     messages = [Message(role="user", content=f"note {i}") for i in range(3 * limit + 1)]
 
-    decision = await _step(policy, client, Checkpoint.input, messages)
+    decision = await _step(policy, client, Checkpoint.INPUT, messages)
 
-    assert decision.action == Action.allow
+    assert decision.action == Action.ALLOW
     assert jev.calls == len(messages) and jev.max_in_flight == limit

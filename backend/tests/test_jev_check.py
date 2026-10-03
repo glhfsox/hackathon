@@ -4,7 +4,7 @@ import pytest
 
 from app.checks.base import CheckContext, JudgeUnavailable
 from app.checks.jev import CHECK
-from app.jev import MockJudge
+from app.core.jev import MockJudge
 from app.models import (
     CanonicalRequest,
     Checkpoint,
@@ -40,7 +40,7 @@ def _tool_result_req(*tool_texts: str) -> CanonicalRequest:
         ),
     ]
     msgs += [Message(role="tool", content=t, tool_call_id="1") for t in tool_texts]
-    return _req(Checkpoint.tool_result, msgs)
+    return _req(Checkpoint.TOOL_RESULT, msgs)
 
 
 def _judge(score: float, decided_by: str = "jev", categories: list[str] | None = None):
@@ -102,7 +102,7 @@ class CachingJudge(MockJudge):
 
 def test_contract():
     assert CHECK.id == "jev" and CHECK.cost_rank == 7
-    assert CHECK.checkpoints == {Checkpoint.input, Checkpoint.tool_result, Checkpoint.output}
+    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
 
 
 async def test_score_equal_to_threshold_blocks():
@@ -111,32 +111,32 @@ async def test_score_equal_to_threshold_blocks():
     res = await CHECK.run(_tool_result_req(HIDDEN), {}, _ctx(judge, threshold=0.6))
 
     assert res.verdict == "block"
-    assert res.score == 0.6 and res.decided_by == DecidedBy.jev
+    assert res.score == 0.6 and res.decided_by == DecidedBy.JEV
     assert "judge says so" in res.reason
     assert "hidden_instruction, data_exfiltration" in res.reason
-    assert res.checkpoint == Checkpoint.tool_result
+    assert res.checkpoint == Checkpoint.TOOL_RESULT
 
 
 async def test_score_below_threshold_allows():
     res = await CHECK.run(_tool_result_req("name: Jan"), {}, _ctx(_judge(0.59), threshold=0.6))
 
-    assert res.verdict == "allow" and res.score == 0.59 and res.decided_by == DecidedBy.jev
+    assert res.verdict == "allow" and res.score == 0.59 and res.decided_by == DecidedBy.JEV
 
 
 async def test_fallback_decision_is_recorded():
     res = await CHECK.run(_tool_result_req(HIDDEN), {}, _ctx(_judge(0.9, decided_by="fallback")))
 
-    assert res.verdict == "block" and res.decided_by == DecidedBy.fallback
+    assert res.verdict == "block" and res.decided_by == DecidedBy.FALLBACK
 
 
 async def test_judge_input_has_text_and_context():
     judge = _judge(0.1)
-    req = _req(Checkpoint.input, [Message(role="user", content="hello there")])
+    req = _req(Checkpoint.INPUT, [Message(role="user", content="hello there")])
 
     await CHECK.run(req, {}, _ctx(judge))
 
     (inp,) = judge.calls
-    assert inp.checkpoint == Checkpoint.input and inp.text == "hello there"
+    assert inp.checkpoint == Checkpoint.INPUT and inp.text == "hello there"
     assert "developer" in inp.context
     assert "query_customers" in inp.context and "run_shell" in inp.context
 
@@ -152,22 +152,22 @@ async def test_every_message_with_content_is_judged_separately():
         Message(role="tool", content="second", tool_call_id="1"),
     ]
 
-    await CHECK.run(_req(Checkpoint.tool_result, msgs), {}, _ctx(judge))
+    await CHECK.run(_req(Checkpoint.TOOL_RESULT, msgs), {}, _ctx(judge))
 
     # Each message is judged as where it was captured, whatever this request's checkpoint is.
     assert [(c.text, c.checkpoint) for c in judge.calls] == [
-        ("be helpful", Checkpoint.input),
-        ("look up customer 42", Checkpoint.input),
-        ("sure", Checkpoint.output),
-        ("first", Checkpoint.tool_result),
-        ("second", Checkpoint.tool_result),
+        ("be helpful", Checkpoint.INPUT),
+        ("look up customer 42", Checkpoint.INPUT),
+        ("sure", Checkpoint.OUTPUT),
+        ("first", Checkpoint.TOOL_RESULT),
+        ("second", Checkpoint.TOOL_RESULT),
     ]
 
 
 async def test_same_message_gives_same_judge_input_wherever_it_is():
     # Identical inputs let the Jev client cache verdicts, so history is not paid for again.
     first = _judge(0.1)
-    await CHECK.run(_req(Checkpoint.input, [Message(role="user", content="hi")]), {}, _ctx(first))
+    await CHECK.run(_req(Checkpoint.INPUT, [Message(role="user", content="hi")]), {}, _ctx(first))
     later = _judge(0.1)
     msgs = [
         Message(role="system", content="be helpful"),
@@ -175,7 +175,7 @@ async def test_same_message_gives_same_judge_input_wherever_it_is():
         Message(role="assistant", tool_calls=[ToolCall(id="1", name="query_customers")]),
         Message(role="tool", content="row", tool_call_id="1"),
     ]
-    await CHECK.run(_req(Checkpoint.tool_result, msgs), {}, _ctx(later))
+    await CHECK.run(_req(Checkpoint.TOOL_RESULT, msgs), {}, _ctx(later))
 
     assert first.calls[0] in later.calls
 
@@ -184,13 +184,13 @@ async def test_reply_and_the_same_text_as_history_give_the_same_judge_input():
     at_output = _judge(0.1)
     reply = Message(role="assistant", content="Customer 42 lives in Krakow.")
     await CHECK.run(
-        _req(Checkpoint.output, [Message(role="user", content="where?")], reply),
+        _req(Checkpoint.OUTPUT, [Message(role="user", content="where?")], reply),
         {},
         _ctx(at_output),
     )
     next_step = _judge(0.1)
     msgs = [Message(role="user", content="where?"), reply, Message(role="user", content="thanks")]
-    await CHECK.run(_req(Checkpoint.input, msgs), {}, _ctx(next_step))
+    await CHECK.run(_req(Checkpoint.INPUT, msgs), {}, _ctx(next_step))
 
     assert at_output.calls[0] in next_step.calls
 
@@ -198,7 +198,7 @@ async def test_reply_and_the_same_text_as_history_give_the_same_judge_input():
 async def test_output_reply_is_judged():
     judge = _judge(0.1)
     req = _req(
-        Checkpoint.output,
+        Checkpoint.OUTPUT,
         [Message(role="user", content="hi")],
         reply=Message(role="assistant", content="final answer"),
     )
@@ -211,10 +211,10 @@ async def test_output_reply_is_judged():
 @pytest.mark.parametrize(
     "req",
     [
-        _req(Checkpoint.input, [Message(role="user", content="")]),
-        _req(Checkpoint.output, [Message(role="user", content="hi")], reply=None),
+        _req(Checkpoint.INPUT, [Message(role="user", content="")]),
+        _req(Checkpoint.OUTPUT, [Message(role="user", content="hi")], reply=None),
         _req(
-            Checkpoint.output,
+            Checkpoint.OUTPUT,
             [Message(role="user", content="hi")],
             reply=Message(role="assistant", content=None),
         ),
@@ -242,7 +242,7 @@ async def test_judge_unavailable_is_error():
 
 
 def _tool_chunks(judge) -> list[str]:
-    return [c.text for c in judge.calls if c.checkpoint == Checkpoint.tool_result]
+    return [c.text for c in judge.calls if c.checkpoint == Checkpoint.TOOL_RESULT]
 
 
 async def test_long_message_is_split_into_max_chars_chunks():
@@ -353,7 +353,7 @@ async def test_cached_chunks_are_not_judged_and_do_not_count_against_the_cap():
     judge = CachingJudge(known, _verdict(0.2, "fresh"))
 
     res = await CHECK.run(
-        _req(Checkpoint.input, history), {"max_judge_calls": 1}, _ctx(judge, threshold=0.6)
+        _req(Checkpoint.INPUT, history), {"max_judge_calls": 1}, _ctx(judge, threshold=0.6)
     )
 
     assert res.verdict == "allow" and res.score == 0.2 and res.reason == "fresh"
@@ -365,7 +365,7 @@ async def test_only_new_chunks_count_against_the_cap():
     known = {m.content: _verdict(0.1, "seen before") for m in history[:-6]}
     judge = CachingJudge(known, _verdict(0.1, "fresh"))
 
-    res = await CHECK.run(_req(Checkpoint.input, history), {"max_judge_calls": 4}, _ctx(judge))
+    res = await CHECK.run(_req(Checkpoint.INPUT, history), {"max_judge_calls": 4}, _ctx(judge))
 
     assert res.verdict == "error" and judge.calls == []
     assert res.reason == "conversation too large to judge: 6 new chunks exceed max_judge_calls 4"
@@ -377,9 +377,9 @@ async def test_a_cached_risky_verdict_still_blocks():
     known = {"answer 1": _verdict(0.9, "worst", "fallback", ["hidden_instruction"])}
     judge = CachingJudge(known, _verdict(0.1, "fresh"))
 
-    res = await CHECK.run(_req(Checkpoint.input, history), {}, _ctx(judge))
+    res = await CHECK.run(_req(Checkpoint.INPUT, history), {}, _ctx(judge))
 
-    assert res.verdict == "block" and res.score == 0.9 and res.decided_by == DecidedBy.fallback
+    assert res.verdict == "block" and res.score == 0.9 and res.decided_by == DecidedBy.FALLBACK
     assert res.reason == "worst [hidden_instruction]"
     assert "answer 1" not in [c.text for c in judge.calls]
 
@@ -421,7 +421,7 @@ async def test_max_score_wins_with_its_reason_categories_and_decider():
 
     res = await CHECK.run(_tool_result_req("first", "second"), {}, _ctx(judge))
 
-    assert res.verdict == "block" and res.score == 0.9 and res.decided_by == DecidedBy.fallback
+    assert res.verdict == "block" and res.score == 0.9 and res.decided_by == DecidedBy.FALLBACK
     assert res.reason == "worst [hidden_instruction]"
 
 
@@ -433,7 +433,7 @@ async def test_max_score_below_threshold_allows_with_that_score():
     res = await CHECK.run(_tool_result_req("first", "second"), {}, _ctx(judge, threshold=0.6))
 
     assert res.verdict == "allow" and res.score == 0.3 and res.reason == "slightly odd"
-    assert res.decided_by == DecidedBy.fallback
+    assert res.decided_by == DecidedBy.FALLBACK
 
 
 @pytest.mark.parametrize("bad", [0, -1, "100", 1.5, True])

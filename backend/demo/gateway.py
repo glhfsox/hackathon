@@ -10,7 +10,7 @@ agents move to the real proxy by changing only their base URL:
 plus GET /api/health and GET /api/metrics so the demo is observable. Nothing else from /api.
 
 Only the HTTP glue and the OpenAI <-> canonical translation live here. The decisions come from the
-real pieces: app.pipeline, PolicyStore (hot reload), SignatureFeed, UsageLedger, JevClient, the
+real pieces: app.core.pipeline, PolicyStore (hot reload), SignatureFeed, UsageLedger, JevClient, the
 JSONL (+ optional Langfuse) audit sinks and StatsExporter (docs/architecture.md §3).
 """
 
@@ -33,11 +33,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.audit import AuditSink
-from app.budget import UsageLedger
 from app.checks.base import Signature
-from app.jev import JevClient
-from app.metrics import compute_metrics
+from app.core.budget import UsageLedger
+from app.core.jev import JevClient
+from app.core.metrics import compute_metrics
+from app.core.pipeline import detect_reply_checkpoint, detect_request_checkpoint, run_checkpoint
+from app.core.policy_store import PolicySnapshot, PolicyStore
+from app.core.signatures import SignatureFeed
 from app.models import (
     Action,
     AuditRecord,
@@ -49,13 +51,10 @@ from app.models import (
     ToolDef,
     Usage,
 )
-from app.pipeline import detect_reply_checkpoint, detect_request_checkpoint, run_checkpoint
-from app.policy import Caller
-from app.policy_store import LoadedPolicy, PolicyStore
-from app.signatures import SignatureFeed
-from app.sinks import FanoutAuditSink, JsonlAuditSink, read_jsonl
-from app.stats import StatsExporter
-from app.tracing import build_langfuse_sink
+from app.models.policy import Caller
+from app.observability.sinks import AuditSink, FanoutAuditSink, JsonlAuditSink, read_jsonl
+from app.observability.stats import StatsExporter
+from app.observability.tracing import build_langfuse_sink
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +265,7 @@ class _Gateway:
 
     async def event(
         self,
-        loaded: LoadedPolicy,
+        loaded: PolicySnapshot,
         check: str,
         reason: str,
         *,
@@ -283,7 +282,7 @@ class _Gateway:
                 caller_id=caller_id,
                 model=model,
                 check=check,
-                action=Action.block,
+                action=Action.BLOCK,
                 reason=reason,
                 latency_ms=latency_ms,
                 policy_version=loaded.version,
@@ -291,7 +290,7 @@ class _Gateway:
         )
 
     async def authenticate(
-        self, loaded: LoadedPolicy, request: Request, request_id: str
+        self, loaded: PolicySnapshot, request: Request, request_id: str
     ) -> tuple[str, Caller] | JSONResponse:
         header = request.headers.get("authorization", "")
         scheme, _, key = header.partition(" ")
@@ -307,13 +306,13 @@ class _Gateway:
         return found
 
     async def bad_request(
-        self, loaded: LoadedPolicy, exc: ValueError, *, request_id: str, caller_id: str
+        self, loaded: PolicySnapshot, exc: ValueError, *, request_id: str, caller_id: str
     ) -> JSONResponse:
         reason = f"malformed request body: {_describe(exc)}"
         await self.event(loaded, "bad_request", reason, request_id=request_id, caller_id=caller_id)
         return _error(400, reason, "invalid_request_error")
 
-    async def signatures(self, loaded: LoadedPolicy) -> list[Signature] | None:
+    async def signatures(self, loaded: PolicySnapshot) -> list[Signature] | None:
         cfg = loaded.policy.signatures
         if cfg is None:
             # No feed configured: the signatures check, if on, fails closed on None.
@@ -365,7 +364,7 @@ class _Gateway:
             canonical, policy, loaded.version, caller, **shared
         )
         decisions = [decision]
-        if decision.action == Action.block:
+        if decision.action == Action.BLOCK:
             return _blocked(request_id, model, decisions)
         # Counted only once the request is allowed and about to reach the model.
         self.ledger.record_request(caller_id)
@@ -415,7 +414,7 @@ class _Gateway:
             reply_request, policy, loaded.version, caller, usage=usage, **shared
         )
         decisions.append(reply_decision)
-        if reply_decision.action == Action.block:
+        if reply_decision.action == Action.BLOCK:
             return _blocked(request_id, model, decisions)
         assert reply_checked.reply is not None  # set above; the pipeline keeps it
         return JSONResponse(
@@ -438,7 +437,7 @@ class _Gateway:
             request_id=request_id,
             caller_id=caller_id,
             model=GUARD_MODEL,
-            checkpoint=Checkpoint.tool_call,
+            checkpoint=Checkpoint.TOOL_CALL,
             messages=parsed.messages,
             reply=Message(role="assistant", tool_calls=[parsed.tool_call]),
         )
@@ -454,7 +453,7 @@ class _Gateway:
         )
         return JSONResponse(
             {
-                "allowed": decision.action != Action.block,
+                "allowed": decision.action != Action.BLOCK,
                 "decision": decision.model_dump(mode="json"),
             }
         )

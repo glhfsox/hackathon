@@ -62,13 +62,14 @@ def _spec(checkpoints: set[Checkpoint], **params: Any) -> CheckSpec:
 
 
 _IN, _CALL, _RESULT, _OUT = (
-    Checkpoint.input,
-    Checkpoint.tool_call,
-    Checkpoint.tool_result,
-    Checkpoint.output,
+    Checkpoint.INPUT,
+    Checkpoint.TOOL_CALL,
+    Checkpoint.TOOL_RESULT,
+    Checkpoint.OUTPUT,
 )
 # Static on purpose: importing app.checks here would be an import cycle (app.checks.signatures ->
-# app.signatures -> app.policy). tests/test_integration.py asserts it matches the check registry.
+# app.core.signatures -> app.models.policy). tests/test_integration.py asserts it matches the
+# check registry.
 # Only types are checked here; value checks a check owns (known names, regex syntax) stay in it.
 # Only jev takes timeout_s (the pipeline applies it): the rule checks are synchronous CPU work that
 # a timeout could not interrupt, so a timeout_s there would only pretend to bound them.
@@ -174,7 +175,7 @@ class Caller(_Strict):
     budgets: Budgets = Field(default_factory=Budgets)
 
 
-class CheckConfig(BaseModel):
+class CheckSection(BaseModel):
     """One check's section: checkpoint keys are modes, every other key is a check parameter."""
 
     modes: dict[Checkpoint, Mode] = Field(default_factory=dict)
@@ -190,7 +191,7 @@ class CheckConfig(BaseModel):
         return {"modes": modes, "params": params}
 
     def mode(self, checkpoint: Checkpoint) -> Mode:
-        return self.modes.get(checkpoint, Mode.off)
+        return self.modes.get(checkpoint, Mode.OFF)
 
 
 class JevFallback(_Strict):
@@ -220,7 +221,7 @@ class Policy(_Strict):
     profiles: dict[str, Profile]
     models: dict[str, ModelConfig]
     callers: dict[str, Caller]
-    checks: dict[str, CheckConfig] = Field(default_factory=dict)
+    checks: dict[str, CheckSection] = Field(default_factory=dict)
     signatures: SignatureFeedConfig | None = None
     jev: JevConfig
 
@@ -257,9 +258,9 @@ class Policy(_Strict):
             for cp in Checkpoint:
                 if cp not in CHECK_SPECS[_JEV].checkpoints:
                     continue
-                if self._mode_in(profile, _JEV, cp) == Mode.off:
+                if self._mode_in(profile, _JEV, cp) == Mode.OFF:
                     continue
-                if self._mode_in(profile, _PII, cp) != Mode.off:
+                if self._mode_in(profile, _PII, cp) != Mode.OFF:
                     continue
                 # Point at the key that turned pii_secrets off for this profile.
                 if cp in profile.checks.get(_PII, {}):
@@ -274,7 +275,7 @@ class Policy(_Strict):
                 f"pii_secrets is off at {cp} while jev is on there (profile {', '.join(names)}): "
                 f"nothing would redact PII before it is sent to Jev. Turn pii_secrets on at {cp} "
                 "(monitor is enough) or turn jev off there",
-                Mode.off.value,
+                Mode.OFF.value,
             )
         # A role pii_secrets skips is never redacted, so Jev must not be sent that role either.
         pii_skips = self.check_config(_PII).params.get("skip_roles", [])
@@ -282,7 +283,7 @@ class Policy(_Strict):
         if isinstance(pii_skips, list) and isinstance(jev_skips, list):
             missing = sorted(set(map(str, pii_skips)) - set(map(str, jev_skips)))
             jev_on = any(
-                self._mode_in(profile, _JEV, cp) != Mode.off
+                self._mode_in(profile, _JEV, cp) != Mode.OFF
                 for profile in self.profiles.values()
                 for cp in CHECK_SPECS[_JEV].checkpoints
             )
@@ -298,8 +299,8 @@ class Policy(_Strict):
     def profile(self) -> Profile:
         return self.profiles[self.active_profile]
 
-    def check_config(self, check_id: str) -> CheckConfig:
-        return self.checks.get(check_id, CheckConfig())
+    def check_config(self, check_id: str) -> CheckSection:
+        return self.checks.get(check_id, CheckSection())
 
     def mode(self, check_id: str, checkpoint: Checkpoint) -> Mode:
         """Effective mode: the active profile's override wins over the check's base mode."""

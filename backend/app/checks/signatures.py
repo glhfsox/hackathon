@@ -8,8 +8,8 @@ import unicodedata
 from typing import Any, get_args
 
 from app.checks.base import REPLY_INDEX, CheckContext, make_result, targets
+from app.core.signatures import CATEGORIES
 from app.models import CanonicalRequest, Checkpoint, CheckResult, Message
-from app.signatures import CATEGORIES
 
 _ROLES = frozenset(get_args(Message.model_fields["role"].annotation))
 
@@ -58,7 +58,7 @@ def _forms(text: str) -> list[str]:
 class SignaturesCheck:
     id = "signatures"
     cost_rank = 4
-    checkpoints = frozenset({Checkpoint.input, Checkpoint.tool_call, Checkpoint.tool_result})
+    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_CALL, Checkpoint.TOOL_RESULT})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

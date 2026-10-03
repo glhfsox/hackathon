@@ -23,21 +23,21 @@ from app.models import CanonicalRequest, Checkpoint, CheckResult
 class PermissionsCheck:
     id = "permissions"
     cost_rank = 1
-    checkpoints = frozenset({Checkpoint.input, Checkpoint.tool_call, Checkpoint.tool_result})
+    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_CALL, Checkpoint.TOOL_RESULT})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext
     ) -> CheckResult:
         started = time.perf_counter()
         role = ctx.caller_role
-        if request.checkpoint in (Checkpoint.input, Checkpoint.tool_result):
+        if request.checkpoint in (Checkpoint.INPUT, Checkpoint.TOOL_RESULT):
             if request.model not in ctx.allowed_models:
                 reason = f"model {safe_label(request.model)!r} is not allowed for role {role!r}"
                 return make_result(self.id, request, "block", reason, started)
             reason = f"model {safe_label(request.model)!r} is allowed for role {role!r}"
             return make_result(self.id, request, "allow", reason, started)
 
-        if request.checkpoint == Checkpoint.tool_call:
+        if request.checkpoint == Checkpoint.TOOL_CALL:
             calls = request.reply.tool_calls if request.reply else []
             if not calls:
                 reason = "tool_call checkpoint without tool calls in the reply"

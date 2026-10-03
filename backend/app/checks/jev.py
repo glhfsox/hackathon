@@ -33,10 +33,10 @@ log = logging.getLogger(__name__)
 # Where a message's text was captured. It follows the role, not the checkpoint of the request
 # that carries the message, so a message is judged the same way at every step.
 _CAPTURED_AT = {
-    "system": Checkpoint.input,
-    "user": Checkpoint.input,
-    "assistant": Checkpoint.output,
-    "tool": Checkpoint.tool_result,
+    "system": Checkpoint.INPUT,
+    "user": Checkpoint.INPUT,
+    "assistant": Checkpoint.OUTPUT,
+    "tool": Checkpoint.TOOL_RESULT,
 }
 
 
@@ -51,7 +51,7 @@ def _key(inp: JudgeInput) -> tuple[str, str, str]:
 class JevCheck:
     id = "jev"
     cost_rank = 7
-    checkpoints = frozenset({Checkpoint.input, Checkpoint.tool_result, Checkpoint.output})
+    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

@@ -9,8 +9,8 @@ import pytest
 from app.checks import tool_args
 from app.checks.base import CheckContext
 from app.checks.tool_args import CHECK
+from app.core.signatures import load_signatures
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
-from app.signatures import load_signatures
 
 SETTINGS = {
     "allowed_root": "/workspace",
@@ -29,7 +29,7 @@ def _request(*calls: tuple[str, dict[str, Any]]) -> CanonicalRequest:
         request_id="r1",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.tool_call,
+        checkpoint=Checkpoint.TOOL_CALL,
         messages=[Message(role="user", content="do the task")],
         reply=Message(
             role="assistant",
@@ -295,7 +295,7 @@ async def test_blocks(tool: str, args: dict[str, Any], expected: str) -> None:
     assert expected in result.reason
     assert result.score == 1.0
     assert result.check == "tool_args"
-    assert result.checkpoint == Checkpoint.tool_call
+    assert result.checkpoint == Checkpoint.TOOL_CALL
 
 
 @pytest.mark.parametrize(("tool", "args"), ALLOWED)
@@ -307,7 +307,7 @@ async def test_allows(tool: str, args: dict[str, Any]) -> None:
 def test_interface() -> None:
     assert CHECK.id == "tool_args"
     assert CHECK.cost_rank == 5
-    assert CHECK.checkpoints == frozenset({Checkpoint.tool_call})
+    assert CHECK.checkpoints == frozenset({Checkpoint.TOOL_CALL})
 
 
 async def test_nested_arguments_report_their_path() -> None:

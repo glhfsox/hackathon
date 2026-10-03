@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy
-from app.policy import Policy
+from app.models.policy import Policy
 
 # AuditRecord.check values that are system events, not check results (contracts/models.md).
 SYSTEM_EVENTS = frozenset(
@@ -51,18 +51,18 @@ SYSTEM_EVENTS = frozenset(
     }
 )
 # Checkpoints before the upstream call: a block there means the paid model was never called.
-_REQUEST_CHECKPOINTS = frozenset({Checkpoint.input, Checkpoint.tool_result})
+_REQUEST_CHECKPOINTS = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT})
 # The AI decision maker's check id. SC-003 measures rule overhead without it.
 AI_CHECK = "jev"
 # Presentation limit for the dashboard list, not a decision parameter.
 TOP_BLOCK_REASONS = 10
 
-_STRENGTH = {Action.allow: 0, Action.flag: 1, Action.redact: 2, Action.block: 3}
+_STRENGTH = {Action.ALLOW: 0, Action.FLAG: 1, Action.REDACT: 2, Action.BLOCK: 3}
 _OUTCOME = {
-    Action.allow: "allowed",
-    Action.redact: "redacted",
-    Action.block: "blocked",
-    Action.flag: "flagged",
+    Action.ALLOW: "allowed",
+    Action.REDACT: "redacted",
+    Action.BLOCK: "blocked",
+    Action.FLAG: "flagged",
 }
 
 _Row = tuple[AuditRecord, datetime]
@@ -169,10 +169,10 @@ def _agents(turns: list[_Turn]) -> dict[str, dict[str, Any]]:
             "max_steps": max(steps.values(), default=0),
             "tool_calls": sum(t.tool_calls for t in own),
             "tool_usage": _sorted_counts(Counter(name for t in own for name in t.tools)),
-            "blocked_turns": outcomes[Action.block],
-            "block_rate": _ratio(outcomes[Action.block], len(own)),
-            "redacted_turns": outcomes[Action.redact],
-            "flagged_turns": outcomes[Action.flag],
+            "blocked_turns": outcomes[Action.BLOCK],
+            "block_rate": _ratio(outcomes[Action.BLOCK], len(own)),
+            "redacted_turns": outcomes[Action.REDACT],
+            "flagged_turns": outcomes[Action.FLAG],
             "tokens": sum(t.tokens for t in own),
             "cost": float(sum(t.cost for t in own)),
             "avg_upstream_latency_ms": _ratio(upstream, len(reached)),
@@ -207,7 +207,7 @@ def _economics(
         if record.caller_id is not None:
             cost_by_caller[record.caller_id] += record.cost
         cost_by_day[ts.date().isoformat()] += record.cost
-        if record.action == Action.block and record.checkpoint in _REQUEST_CHECKPOINTS:
+        if record.action == Action.BLOCK and record.checkpoint in _REQUEST_CHECKPOINTS:
             blocked_before_upstream += 1
     session_cost: dict[str, float] = defaultdict(float)
     for turn in turns:
@@ -267,7 +267,7 @@ def compute_metrics(
         counts = actions_by_check.setdefault(record.check, {a.value: 0 for a in Action})
         counts[record.action.value] += 1
         decided_by[record.decided_by.value] += 1
-        if record.action == Action.block:
+        if record.action == Action.BLOCK:
             blocks_by_check[record.check] += 1
             blocks_by_checkpoint[record.checkpoint.value] += 1
             if record.caller_id is not None:

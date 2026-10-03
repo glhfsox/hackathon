@@ -23,7 +23,7 @@ def _fmt(value: float) -> str:
 class BudgetCheck:
     id = "budget"
     cost_rank = 2
-    checkpoints = frozenset({Checkpoint.input, Checkpoint.tool_result})
+    checkpoints = frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT})
 
     async def run(
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext

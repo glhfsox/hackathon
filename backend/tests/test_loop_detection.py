@@ -8,7 +8,7 @@ from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 
 
 def _request(
-    calls: list[tuple[str, dict[str, Any]]], checkpoint: Checkpoint = Checkpoint.tool_result
+    calls: list[tuple[str, dict[str, Any]]], checkpoint: Checkpoint = Checkpoint.TOOL_RESULT
 ) -> CanonicalRequest:
     """A conversation where each call is its own assistant step followed by its tool result."""
     messages = [Message(role="user", content="do the task")]
@@ -18,7 +18,7 @@ def _request(
             Message(role="assistant", tool_calls=[ToolCall(id=call_id, name=name, arguments=args)])
         )
         messages.append(Message(role="tool", content="ok", tool_call_id=call_id))
-    if checkpoint == Checkpoint.input:
+    if checkpoint == Checkpoint.INPUT:
         messages.append(Message(role="user", content="continue"))
     return CanonicalRequest(
         request_id="r", caller_id="demo", model="gemma4", checkpoint=checkpoint, messages=messages
@@ -36,7 +36,7 @@ async def _run(request: CanonicalRequest, **settings: Any):
 def test_metadata():
     assert CHECK.id == "loop_detection"
     assert CHECK.cost_rank == 3
-    assert CHECK.checkpoints == frozenset({Checkpoint.input, Checkpoint.tool_result})
+    assert CHECK.checkpoints == frozenset({Checkpoint.INPUT, Checkpoint.TOOL_RESULT})
 
 
 @pytest.mark.parametrize(
@@ -95,7 +95,7 @@ async def test_parallel_tool_calls_in_one_message_are_counted():
         request_id="r",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.tool_result,
+        checkpoint=Checkpoint.TOOL_RESULT,
         messages=[
             Message(role="user", content="go"),
             Message(role="assistant", tool_calls=calls),
@@ -111,7 +111,7 @@ async def test_parallel_tool_calls_in_one_message_are_counted():
 # questions per session. They count one agent turn: the tool calls since the last user message.
 
 
-def _turns(*turns: list[tuple[str, dict[str, Any]]], checkpoint=Checkpoint.tool_result):
+def _turns(*turns: list[tuple[str, dict[str, Any]]], checkpoint=Checkpoint.TOOL_RESULT):
     """A conversation of user turns; every turn but the last ends with the assistant's answer."""
     messages: list[Message] = []
     n = 0
@@ -127,7 +127,7 @@ def _turns(*turns: list[tuple[str, dict[str, Any]]], checkpoint=Checkpoint.tool_
             messages.append(Message(role="tool", content="ok", tool_call_id=call_id))
         if t < len(turns) - 1:
             messages.append(Message(role="assistant", content=f"answer {t}"))
-    if checkpoint == Checkpoint.input:
+    if checkpoint == Checkpoint.INPUT:
         messages += [Message(role="assistant", content="done"), Message(role="user", content="?")]
     return CanonicalRequest(
         request_id="r", caller_id="demo", model="gemma4", checkpoint=checkpoint, messages=messages
@@ -167,7 +167,7 @@ async def test_runaway_loop_inside_one_turn_still_blocks():
 
 async def test_input_checkpoint_starts_a_new_turn():
     # A new user message opens a new turn, so the history of the previous one does not count.
-    result = await _run(_request(_distinct(4), Checkpoint.input), max_tool_calls=3, max_repeats=0)
+    result = await _run(_request(_distinct(4), Checkpoint.INPUT), max_tool_calls=3, max_repeats=0)
     assert result.verdict == "allow", result.reason
 
 
@@ -203,7 +203,7 @@ async def test_no_tool_calls_allows():
         request_id="r",
         caller_id="demo",
         model="gemma4",
-        checkpoint=Checkpoint.input,
+        checkpoint=Checkpoint.INPUT,
         messages=[Message(role="user", content="hello")],
     )
     assert (await _run(request, max_tool_calls=0, max_repeats=0)).verdict == "allow"

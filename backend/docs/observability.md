@@ -52,9 +52,9 @@ All in the folder given to `JsonlAuditSink` (e.g. `backend/logs/`; keep it out o
 **Simplest:** export a CSV and load it with *Get Data -> Text/CSV*:
 
 ```bash
-uv run python -m app.stats --logs logs/ --policy policy.yaml --csv audit.csv   # metrics JSON on stdout
-uv run python -m app.stats --logs logs/ --policy policy.yaml --since 2026-10-03T12:00:00Z
-uv run python -m app.stats --logs logs/ --policy policy.yaml --turns-csv turns.csv  # turn_summary rows only
+uv run python -m app.observability.stats --logs logs/ --policy policy.yaml --csv audit.csv   # metrics JSON on stdout
+uv run python -m app.observability.stats --logs logs/ --policy policy.yaml --since 2026-10-03T12:00:00Z
+uv run python -m app.observability.stats --logs logs/ --policy policy.yaml --turns-csv turns.csv  # turn_summary rows only
 ```
 
 **Live folder:** *Get Data -> Folder*, pick the logs folder, then *Transform Data* and replace the
@@ -181,9 +181,9 @@ are never sent: the record has no field for them, and trace input/output are nev
 import asyncio
 from pathlib import Path
 
-from app.sinks import FanoutAuditSink, JsonlAuditSink
-from app.stats import StatsExporter
-from app.tracing import build_langfuse_sink
+from app.observability.sinks import FanoutAuditSink, JsonlAuditSink
+from app.observability.stats import StatsExporter
+from app.observability.tracing import build_langfuse_sink
 
 audit = FanoutAuditSink(
     [JsonlAuditSink(Path("logs")), *([lf] if (lf := build_langfuse_sink()) else [])]

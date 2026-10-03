@@ -5,8 +5,8 @@ plus `generated_at`, replaced atomically) and appends one flat line to `metrics-
 (the numbers a time chart needs). `StatsExporter` refreshes both every few seconds from the JSONL
 audit log of the current UTC day. See backend/docs/observability.md.
 
-CLI: python -m app.stats --logs logs/ --policy policy.yaml [--since ISO] [--csv out.csv]
-     [--turns-csv turns.csv]
+CLI: python -m app.observability.stats --logs logs/ --policy policy.yaml [--since ISO]
+     [--csv out.csv] [--turns-csv turns.csv]
 """
 
 from __future__ import annotations
@@ -25,11 +25,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.metrics import compute_metrics
+from app.core.metrics import compute_metrics
+from app.core.policy_store import parse_policy
 from app.models import TURN_SUMMARY, AuditRecord
-from app.policy import Policy
-from app.policy_store import PolicyError, parse_policy
-from app.sinks import COLUMNS, audit_row, read_jsonl
+from app.models.policy import Policy
+from app.observability.sinks import COLUMNS, audit_row, read_jsonl
+from app.protocols.policy_provider import PolicyRejectedError
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ def write_csv(records: Iterable[AuditRecord], path: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m app.stats",
+        prog="python -m app.observability.stats",
         description="Print control-layer metrics (JSON) from the JSONL audit log.",
     )
     parser.add_argument("--logs", type=Path, required=True, help="directory of audit-*.jsonl")
@@ -201,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             turns = [r for r in rows if r.check == TURN_SUMMARY]
             count = write_csv(turns, args.turns_csv)
             print(f"wrote {count} {TURN_SUMMARY} rows to {args.turns_csv}", file=sys.stderr)
-    except (PolicyError, ValueError, OSError) as exc:
+    except (PolicyRejectedError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     # stdout carries only the metrics JSON, so it can be piped into a file or jq.

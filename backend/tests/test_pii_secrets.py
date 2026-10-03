@@ -27,11 +27,11 @@ def _req(checkpoint: Checkpoint, messages: list[Message], reply: Message | None 
     )
 
 
-async def _run(text: str, settings: dict | None = None, checkpoint=Checkpoint.input):
-    if checkpoint == Checkpoint.output:
+async def _run(text: str, settings: dict | None = None, checkpoint=Checkpoint.INPUT):
+    if checkpoint == Checkpoint.OUTPUT:
         reply = Message(role="assistant", content=text)
         req = _req(checkpoint, [Message(role="user", content="hi")], reply)
-    elif checkpoint == Checkpoint.tool_result:
+    elif checkpoint == Checkpoint.TOOL_RESULT:
         req = _req(checkpoint, [Message(role="tool", content=text, tool_call_id="1")])
     else:
         req = _req(checkpoint, [Message(role="user", content=text)])
@@ -52,7 +52,7 @@ def _found(result, text: str) -> list[tuple[str, str]]:
 def test_metadata():
     assert CHECK.id == "pii_secrets"
     assert CHECK.cost_rank == 6
-    assert CHECK.checkpoints == {Checkpoint.input, Checkpoint.tool_result, Checkpoint.output}
+    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
 
 
 # --- each type: positive -------------------------------------------------------------------
@@ -570,7 +570,7 @@ async def test_tool_result_redacts_every_tool_message():
         Message(role="assistant", tool_calls=[ToolCall(id="2", name="query_customers")]),
         Message(role="tool", content='{"ssn": "123-45-6789", "mail": "b@y.pl"}', tool_call_id="2"),
     ]
-    result = await CHECK.run(_req(Checkpoint.tool_result, msgs), ALL_TYPES, CheckContext())
+    result = await CHECK.run(_req(Checkpoint.TOOL_RESULT, msgs), ALL_TYPES, CheckContext())
     assert result.verdict == "redact"
     by_msg: dict[int, list[Redaction]] = {}
     for r in result.redactions:
@@ -591,7 +591,7 @@ async def test_input_redacts_every_user_message():
         Message(role="assistant", content="ok"),
         Message(role="user", content="and ssn: 123-45-6789"),
     ]
-    result = await CHECK.run(_req(Checkpoint.input, msgs), ALL_TYPES, CheckContext())
+    result = await CHECK.run(_req(Checkpoint.INPUT, msgs), ALL_TYPES, CheckContext())
     assert sorted((r.message_index, r.kind) for r in result.redactions) == [
         (0, "EMAIL"),
         (2, "SSN"),
@@ -605,7 +605,7 @@ async def test_input_redacts_system_and_assistant_messages():
         Message(role="assistant", content="Your card 4111 1111 1111 1111 is on file"),
         Message(role="user", content="thanks"),
     ]
-    result = await CHECK.run(_req(Checkpoint.input, msgs), ALL_TYPES, CheckContext())
+    result = await CHECK.run(_req(Checkpoint.INPUT, msgs), ALL_TYPES, CheckContext())
     by_msg: dict[int, list[Redaction]] = {}
     for r in result.redactions:
         by_msg.setdefault(r.message_index, []).append(r)
@@ -625,16 +625,16 @@ async def test_skip_roles_leaves_the_system_prompt_unredacted():
         Message(role="user", content="Please write to boss@corp.pl"),
     ]
     settings = {**ALL_TYPES, "skip_roles": ["system"]}
-    result = await CHECK.run(_req(Checkpoint.input, msgs), settings, CheckContext())
+    result = await CHECK.run(_req(Checkpoint.INPUT, msgs), settings, CheckContext())
     assert [(r.message_index, r.kind) for r in result.redactions] == [(1, "EMAIL")]
 
-    default = await CHECK.run(_req(Checkpoint.input, msgs), ALL_TYPES, CheckContext())
+    default = await CHECK.run(_req(Checkpoint.INPUT, msgs), ALL_TYPES, CheckContext())
     assert sorted({r.message_index for r in default.redactions}) == [0, 1]
 
 
 async def test_skip_roles_never_skips_the_reply():
     reply = Message(role="assistant", content="Write to boss@corp.pl")
-    req = _req(Checkpoint.output, [Message(role="user", content="hi")], reply)
+    req = _req(Checkpoint.OUTPUT, [Message(role="user", content="hi")], reply)
     settings = {**ALL_TYPES, "skip_roles": ["system", "user", "assistant", "tool"]}
     result = await CHECK.run(req, settings, CheckContext())
     assert [(r.message_index, r.kind) for r in result.redactions] == [(REPLY_INDEX, "EMAIL")]
@@ -650,15 +650,15 @@ async def test_invalid_skip_roles_is_an_error(skip_roles):
 
 async def test_output_redacts_reply():
     text = "Your IBAN is PL61 1090 1014 0000 0712 1981 2874."
-    result = await _run(text, checkpoint=Checkpoint.output)
-    assert result.checkpoint == Checkpoint.output
+    result = await _run(text, checkpoint=Checkpoint.OUTPUT)
+    assert result.checkpoint == Checkpoint.OUTPUT
     assert [r.message_index for r in result.redactions] == [REPLY_INDEX]
     assert _apply(text, result.redactions) == "Your IBAN is [REDACTED:IBAN]."
 
 
 async def test_output_without_text_allows():
     req = _req(
-        Checkpoint.output, [Message(role="user", content="a@x.pl")], Message(role="assistant")
+        Checkpoint.OUTPUT, [Message(role="user", content="a@x.pl")], Message(role="assistant")
     )
     result = await CHECK.run(req, ALL_TYPES, CheckContext())
     assert result.verdict == "allow"

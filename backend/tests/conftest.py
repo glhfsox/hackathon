@@ -6,9 +6,9 @@ from typing import Literal
 
 import pytest
 
-from app.audit import MemoryAuditSink
 from app.checks.base import JudgeUnavailable
 from app.models import JudgeInput, JudgeVerdict
+from app.observability.sinks import MemoryAuditSink
 
 TEST_API_KEYS = {
     "DEMO_API_KEY": "test-demo-key",
