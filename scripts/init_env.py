@@ -1,7 +1,7 @@
-"""Create .env from .env.example with a random value for every local API key.
+"""Create .env from .env.example with a random JWT_SECRET.
 
 Run once: `docker compose run --rm init`, or `python scripts/init_env.py`. An existing .env is
-never overwritten, so keys already handed to agents keep working.
+never overwritten, so tokens already signed with the secret keep working.
 """
 
 import secrets
@@ -9,27 +9,23 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# Issued by an outside service, so it cannot be generated here.
-EXTERNAL_KEYS = {"TYPESAFE_API_KEY"}
+# The only secret generated here: the layer verifies tokens with it and the agents sign with it.
+# Other keys (TYPESAFE_API_KEY) are issued by an outside service and stay empty.
+GENERATED = "JWT_SECRET"
 
 
 def main() -> int:
     target = ROOT / ".env"
     if target.exists():
-        print(f"{target.name} already exists; delete it first to generate new keys")
+        print(f"{target.name} already exists; delete it first to generate a new secret")
         return 0
     lines = []
     for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
-        name = line.partition("=")[0]
-        if (
-            line == f"{name}="
-            and name.endswith("_API_KEY")
-            and name not in EXTERNAL_KEYS
-        ):
-            line = f"{name}={secrets.token_urlsafe(24)}"
+        if line == f"{GENERATED}=":
+            line = f"{GENERATED}={secrets.token_urlsafe(32)}"
         lines.append(line)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {target.name} with random API keys")
+    print(f"wrote {target.name} with a random {GENERATED}")
     return 0
 
 

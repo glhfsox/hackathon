@@ -15,27 +15,26 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
 
-- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
+- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and sends a signed JWT as its bearer token, and is protected with no other code changes. The user and their roles come from the token, and the policy maps roles to tools (see architecture §11). An agent that ignores our verdict and runs a blocked tool anyway is not stopped by the layer.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
 - **Universal adapter:** every request is translated into one canonical internal model, and checks never see vendor JSON. Only the OpenAI adapter is built. Other formats are "one more adapter" by design.
 - **Checks:** all checks share one interface. They receive the canonical request plus their policy settings and return `allow | redact | block | flag` with a score, reason and latency. They run cheap before expensive and stop at the first block.
   - Rule checks:
     - PII and secrets redaction
-    - API-key permissions (allowed models and tools)
+    - role-based tool permissions: tools the user's roles do not allow are hidden from the model, and denied tool calls are replaced by a notice
     - tool-argument validation (shell, destructive SQL, path traversal, unsafe deserialization)
     - an external attack-signature feed
-    - budgets (tokens, cost, rate)
     - loop detection
   - AI check: Jev (prompt injection, hidden instructions in tool results, overall risk score).
-- **Policy:** controls which checks are on, the action per checkpoint (`off | monitor | redact | block`), thresholds, profiles (`strict | balanced | permissive`), models, callers and budgets.
+- **Policy:** controls which checks are on (a check is on when its section exists), their parameters, the Jev threshold, models, which roles may use which tools, and the budgets per role. There are no modes or profiles: a finding blocks, `pii_secrets` redacts and lets the request through, and an error blocks.
 - **Blocked requests** return a normal OpenAI-format refusal with the reason, so agents don't crash.
 - **Reporting:**
   - The append-only audit log stores every decision with its reason, latency and cost, and it is exportable.
-  - The dashboard shows security posture, blocked threats, budget use and overhead. It also has a policy editor and a chat playground that shows which checks fired.
+  - The dashboard shows security posture, blocked threats, usage per user and overhead. It also has a policy editor and a chat playground that shows which checks fired.
 - **Tests:** data-driven YAML cases, run with one command. Every check has at least one allowed and one blocked case.
 - **Scope:**
   - We build: the layer, one tiny demo agent (a fake customer DB with PII, plus a shell/code tool), the dashboard and the tests.
-  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond API keys.
+  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond verifying signed tokens.
 
 ## 3. Stack
 
@@ -142,4 +141,13 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — AuditRecord gained optional agent/economic fields and a `turn_summary` row per checkpoint (`contracts/models.md`); tokens and cost live only on that row. Free metrics for judges come from `logs/*.jsonl` (Power BI); Langfuse is self-hosted and optional, for the presentation only. (Artem)
 - 2026-10-03 — Policy validation rejects unknown check ids, checkpoints a check never runs at, unknown or mistyped params, and `jev` enabled where `pii_secrets` is off. Provisional schema lives in `backend/app/policy.py`; `backend/policy.yaml` is the documented example. (Artem)
 - 2026-10-03 — Demo: two agents on the bare OpenAI client (worker with Python tools behind the tool guard, orchestrator that delegates via a `delegate` tool call), in `backend/demo/`, with a local stand-in gateway until the real proxy lands; the proxy calls `app.pipeline.run_checkpoint`. (Artem)
+- 2026-10-03 — API-key auth, the tool guard (`POST /v1/tools/check`) and the policy `callers` section are removed. Every request is caller_id `anonymous` (`ANONYMOUS_CALLER` in `backend/app/core/proxy.py`) until JWT-based identity lands (teammate). `permissions` (`allowed_models`, `allowed_tools`) and `budget` (`requests_per_minute`, `tokens_per_day`, `cost_per_day`) are global parameters of their check sections. Supersedes the API-key and tool-guard parts of the entries above; constitution 2.0.0. (Artem)
+- 2026-10-03 — Modes and profiles are removed. A check is on when its `checks.<id>` section exists and then runs at every checkpoint it applies to; a finding blocks, `pii_secrets` redacts and continues, an error blocks (fail closed). One top-level `jev_threshold` replaces the profiles. `/api/metrics` reports `jev_threshold` instead of `active_profile`; `enabled_checks` keeps its per-checkpoint shape. Constitution 2.1.0. (Artem)
+- 2026-10-03 — `jev` and `pii_secrets` also run at `tool_call`. There they read the tool-call view (task, agent reasoning, calls; `CanonicalRequest.tool_call_view`), which `pii_secrets` redacts before Jev sees it; the agent's arguments are never changed. Rule checks run first, so a rule block stops a call before Jev is asked. (Artem)
+- 2026-10-03 — Identity is a signed JWT (HS256 only, `sub`, `roles`, `exp` required, secret in the `JWT_SECRET` env var), replacing API keys and the policy `callers` section. Any failure is 401 and an `auth_failed` audit row. (Oleh)
+- 2026-10-03 — Tool access is role-based: policy `permissions` (permission → tools) and `roles` (role → permissions), deny by default. Inbound the model is not shown forbidden tools, outbound a forbidden tool call is replaced by a text notice, and every tool decision is an `rbac` audit row (architecture §11). OpenAI format only. (Oleh)
+- 2026-10-03 — Dropped: budgets, per-caller model lists, the `budget` check and the usage ledger (they need shared storage). Cost reporting stays. `permissions` now runs only at `tool_call`; this supersedes the entry that put `permissions` (model) and `budget` at `tool_result`. (Oleh)
+- 2026-10-03 — OPEN: how the playground and the demo agents obtain a token (the layer has no token endpoint). The tool guard may be removed. Tests and the demo agents still assume API keys and need migrating. (Oleh)
+- 2026-10-03 — Merged `feature/authorization` into the refactor: JWT identity and RBAC (Oleh) are kept; the tool guard, modes and profiles stay removed. `permissions` checks the model (`checks.permissions.allowed_models`) at input/tool_result and the role's tools at tool_call. Budgets are back, per role (`checks.budget.roles.<role>`), counted per user (`sub`) in the in-memory ledger: a user gets the most generous limits of their roles, and a user none of whose roles has a budget is blocked. Supersedes the "dropped budgets" and "anonymous caller" entries above. The demo agents mint their own tokens with `JWT_SECRET`. Constitution 2.2.0. (Artem)
 - 2026-10-03 — Judges run everything with root `compose.yaml` (`init`, `up`, `run test-app`); Ollama stays on the host and a socat relay keeps `localhost:11434` in `policy.yaml` valid inside Docker. `test_app` switches to proxy mode with `TEST_APP_PROXY_URL`; user roles `clerk`/`treasurer` map to callers `operator_clerk`/`operator_treasurer`. (Sviatoslav)
+- 2026-10-03 — `docker compose up` alone runs the stack: `JWT_SECRET` defaults to a public demo value in `compose.yaml` (override via `.env` or the shell; `init` writes a random one), and the frontend image mints the playground's JWT (`sub` playground, role `developer`, 30 days) from it at build time. Ollama stays on the host. `test_app` signs its own tokens (`analyst`; `operator_<role>` with role `clerk`/`treasurer`) and no longer calls the tool guard; the three old callers became RBAC roles with budgets. (Artem)

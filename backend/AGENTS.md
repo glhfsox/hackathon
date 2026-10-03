@@ -7,7 +7,7 @@ Adds to the root `AGENTS.md`; it does not repeat it. Read before writing code he
 
 ## Scope
 
-The control layer itself: the OpenAI-compatible proxy, the tool-execution guard, the canonical model and adapter, the checks, the policy loader, the Jev client, the audit log and the API the dashboard uses.
+The control layer itself: the OpenAI-compatible proxy, the canonical model and adapter, the checks, the policy loader, the Jev client, the audit log and the API the dashboard uses.
 
 ## Rules
 

@@ -2,12 +2,12 @@
 
 The two-agent application from the test-app design (`test-app-design.md`). The Analyst reads payments and documents; its answer becomes the Operator's input, and the Operator acts on it. It runs in one of two modes:
 
-- **Proxy mode** (`TEST_APP_PROXY_URL` set): both agents go through the control layer, each with its own API key, and every tool call is sent to `/v1/tools/check` before it runs.
+- **Proxy mode** (`TEST_APP_PROXY_URL` set): both agents go through the control layer, each with its own JWT signed with `JWT_SECRET` (Analyst: role `analyst`; Operator: the user's role). The layer checks every tool call in a model reply (RBAC, `tool_args`, Jev) before the agent sees it.
 - **Direct mode** (no proxy URL): both agents talk to the model directly and nothing is checked. Use it to see the risky behaviour the control layer has to catch.
 
 | File | What it is |
 |------|------------|
-| `agents.py` | The tool-calling loop on an OpenAI-compatible `chat/completions` endpoint, the tool-guard call in proxy mode, the two agents, the user roles and the handoff. |
+| `agents.py` | The tool-calling loop on an OpenAI-compatible `chat/completions` endpoint, the two agents, the user roles and the handoff. |
 | `analyst_tools.py` | Agent A: `search_documents` and `query_transactions`, read-only and bound to one client. Arguments and results follow [contracts/rag-demo.md](../contracts/rag-demo.md). Search is keyword overlap over the generated corpus files, so no PostgreSQL or BGE-M3 is needed. |
 | `operator_tools.py` | Agent B: `send_email`, `release_payment`, `hold_payment`, `export_report` and `run_sql`. All of them are mocks. They append to `runs/<time>/<scenario>/actions.jsonl`, and `export_report` writes only under that folder's `reports/`. |
 | `__main__.py` | The CLI and the demo scenarios from section 4 of the design. |
@@ -37,23 +37,23 @@ python -m test_app --scenario all                 # every scenario, then a summa
 python -m test_app "Why is TXN-000001 held?" --client-id CLI-0001 --role clerk
 ```
 
-To go through the control layer, start the backend (see [backend/README.md](../backend/README.md)) with the same keys in its environment, then:
+To go through the control layer, start the backend (see [backend/README.md](../backend/README.md)) with the same `JWT_SECRET` in its environment, then:
 
 ```sh
 export TEST_APP_PROXY_URL=http://localhost:8000/v1
-export ANALYST_API_KEY=... OPERATOR_CLERK_API_KEY=... OPERATOR_TREASURER_API_KEY=...
+export JWT_SECRET=...                             # the secret the backend verifies tokens with
 python -m test_app --scenario all
 ```
 
 | Setting | Default |
 |---------|---------|
 | `TEST_APP_PROXY_URL` / `--proxy` | none: direct mode |
-| `ANALYST_API_KEY`, `OPERATOR_CLERK_API_KEY`, `OPERATOR_TREASURER_API_KEY` | proxy mode only; the policy callers `analyst`, `operator_clerk`, `operator_treasurer` |
+| `JWT_SECRET` | proxy mode only; tokens `sub=analyst` (role `analyst`) and `sub=operator_<role>` (role `clerk` or `treasurer`), matching `roles` in `backend/policy.yaml` |
 | `TEST_APP_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` (direct mode only) |
 | `TEST_APP_LLM_API_KEY` | none, sent as a Bearer token when set (direct mode only) |
 | `TEST_APP_MODEL` / `--model` | `gemma4` |
 
-For each run, the CLI prints every tool call, every decision of the control layer that is not `allow`, both agents' answers and the Operator's logged actions. An agent ends `answered`, `blocked`, `error` or `limit`. When the Analyst is blocked, the Operator does not run. The exit code is 1 when an agent ends with `error` or `limit`, and 2 when the corpus or a proxy key is missing.
+For each run, the CLI prints every tool call, every decision of the control layer that is not `allow`, both agents' answers and the Operator's logged actions. An agent ends `answered`, `blocked`, `error` or `limit`. When the Analyst is blocked, the Operator does not run. The exit code is 1 when an agent ends with `error` or `limit`, and 2 when the corpus or `JWT_SECRET` is missing in proxy mode.
 
 ## User roles
 

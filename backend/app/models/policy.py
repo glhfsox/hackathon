@@ -2,15 +2,15 @@
 
 The official schema is OPEN in contracts/policy.example.yaml. These models cover only what the
 proxy, the permissions check and the Jev client need today, and reject unknown keys so a typo in
-the file is an error, not a silent no-op. That includes unknown check ids, a mode for a checkpoint
-a check never runs at, and a check parameter the check does not take (CHECK_SPECS). The schema
-owner extends them; the store does not change.
+the file is an error, not a silent no-op. That includes unknown check ids and a check parameter
+the check does not take (CHECK_SPECS). A check is on when its section exists under `checks`; it
+runs at every checkpoint it applies to and has no modes. The schema owner extends them; the store
+does not change.
 """
 
 from __future__ import annotations
 
-import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -26,7 +26,7 @@ from pydantic import (
 )
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
-from app.models import Checkpoint, Mode
+from app.models import Checkpoint
 
 _CHECKPOINT_KEYS = {c.value for c in Checkpoint}
 
@@ -41,7 +41,18 @@ _Seconds = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 _Limit = Annotated[int, Field(ge=0)]
 _Size = Annotated[int, Field(gt=0)]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# A role or permission name. Stripped like _Text, so a token's "support" matches "support ".
+_Name = _Text
 _Roles = list[Literal["system", "user", "assistant", "tool"]]
+_Cost = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class RoleBudget(_Strict):
+    """One role's usage limits. A limit left out is unlimited for that role."""
+
+    requests_per_minute: _Limit | None = None
+    tokens_per_day: _Limit | None = None
+    cost_per_day: _Cost | None = None
 
 
 class _ExtraPattern(_Strict):
@@ -74,19 +85,21 @@ _IN, _CALL, _RESULT, _OUT = (
 # Only jev takes timeout_s (the pipeline applies it): the rule checks are synchronous CPU work that
 # a timeout could not interrupt, so a timeout_s there would only pretend to bound them.
 CHECK_SPECS: dict[str, CheckSpec] = {
-    "permissions": _spec({_IN, _CALL, _RESULT}),
-    "budget": _spec({_IN, _RESULT}),
+    # The tools come from the user's roles (`roles` / `permissions`); the models from here.
+    "permissions": _spec({_IN, _CALL, _RESULT}, allowed_models=list[str]),
+    # Limits per role; a user gets the most generous of their roles, none at all is blocked.
+    "budget": _spec({_IN, _RESULT}, roles=dict[str, RoleBudget]),
     "loop_detection": _spec({_IN, _RESULT}, max_tool_calls=_Limit, max_repeats=_Limit),
     "signatures": _spec({_IN, _CALL, _RESULT}, categories=list[str], skip_roles=_Roles),
     "tool_args": _spec({_CALL}, allowed_root=_Text, categories=list[str], max_command_chars=_Size),
     "pii_secrets": _spec(
-        {_IN, _RESULT, _OUT},
+        {_IN, _CALL, _RESULT, _OUT},
         types=list[str],
         extra_patterns=list[_ExtraPattern],
         skip_roles=_Roles,
     ),
     "jev": _spec(
-        {_IN, _RESULT, _OUT},
+        {_IN, _CALL, _RESULT, _OUT},
         timeout_s=_Seconds,
         max_chars=_Size,
         max_judge_calls=Annotated[int, Field(ge=1, le=1024)],
@@ -106,29 +119,29 @@ def _names(values: Any) -> str:
 
 
 def _check_section(
-    loc: tuple[str | int, ...],
-    check_id: str,
-    modes: dict[Checkpoint, Mode],
-    params: dict[str, Any],
-    add: _Add,
+    loc: tuple[str | int, ...], check_id: str, params: dict[str, Any], add: _Add
 ) -> None:
-    """Report an unknown check id, a mode for a checkpoint the check never runs at, and a
-    parameter the check does not take or of the wrong type. Each would otherwise be ignored."""
+    """Report an unknown check id and a parameter the check does not take or of the wrong type.
+    Each would otherwise be ignored."""
     spec = CHECK_SPECS.get(check_id)
     if spec is None:
         add(loc, f"unknown check; the checks are: {_names(CHECK_SPECS)}", check_id)
         return
-    for cp, mode in modes.items():
-        if cp not in spec.checkpoints:
-            msg = f"{check_id} never runs at {cp.value}; it runs at: {_names(spec.checkpoints)}"
-            add((*loc, cp.value), msg, mode.value)
     for key, value in params.items():
         adapter = spec.params.get(key)
+        if key in _CHECKPOINT_KEYS:
+            # The old per-checkpoint modes: say so instead of "unknown key".
+            add(
+                (*loc, key),
+                f"modes were removed: {check_id} runs at {_names(spec.checkpoints)} while its "
+                "section exists; delete this key",
+                value,
+            )
+            continue
         if adapter is None:
             add(
                 (*loc, key),
-                f"unknown key for {check_id}: its checkpoints are {_names(spec.checkpoints)} "
-                f"and its parameters are {_names(spec.params)}",
+                f"unknown key for {check_id}: its parameters are {_names(spec.params)}",
                 value,
             )
             continue
@@ -137,21 +150,6 @@ def _check_section(
         except ValidationError as exc:
             for err in exc.errors():
                 add((*loc, key, *err["loc"]), err["msg"], err["input"])
-
-
-class Profile(_Strict):
-    """A strictness level: the Jev threshold plus per-check mode overrides on top of `checks`."""
-
-    jev_threshold: float = Field(ge=0.0, le=1.0)
-    checks: dict[str, dict[Checkpoint, Mode]] = Field(default_factory=dict)
-
-
-class Budgets(_Strict):
-    """Per-caller limits. None means unlimited."""
-
-    requests_per_minute: int | None = Field(default=None, ge=0)
-    tokens_per_day: int | None = Field(default=None, ge=0)
-    cost_per_day: float | None = Field(default=None, ge=0)
 
 
 class SignatureFeedConfig(_Strict):
@@ -169,31 +167,22 @@ class ModelConfig(_Strict):
     timeout_s: float = Field(default=120.0, gt=0)
 
 
-class Caller(_Strict):
-    api_key_env: str
-    role: str
-    allowed_models: list[str] = Field(default_factory=list)
-    allowed_tools: list[str] = Field(default_factory=list)
-    budgets: Budgets = Field(default_factory=Budgets)
-
-
 class CheckSection(BaseModel):
-    """One check's section: checkpoint keys are modes, every other key is a check parameter."""
+    """One check's section: every key is a check parameter. An empty section (`{}` or a bare
+    `tool_args:`) turns the check on with its defaults."""
 
-    modes: dict[Checkpoint, Mode] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
-    def _split(cls, raw: Any) -> Any:
-        if not isinstance(raw, dict) or "modes" in raw or "params" in raw:
+    def _wrap(cls, raw: Any) -> Any:
+        if raw is None:
+            return {"params": {}}
+        # Already wrapped only when `params` is the sole key; a `params` key written in the
+        # file next to others is a parameter, and then an unknown one.
+        if not isinstance(raw, dict) or set(raw) == {"params"} and isinstance(raw["params"], dict):
             return raw
-        modes = {k: v for k, v in raw.items() if k in _CHECKPOINT_KEYS}
-        params = {k: v for k, v in raw.items() if k not in _CHECKPOINT_KEYS}
-        return {"modes": modes, "params": params}
-
-    def mode(self, checkpoint: Checkpoint) -> Mode:
-        return self.modes.get(checkpoint, Mode.OFF)
+        return {"params": raw}
 
 
 class JevFallback(_Strict):
@@ -219,13 +208,19 @@ class JevConfig(_Strict):
 
 class Policy(_Strict):
     version: str
-    active_profile: str
-    profiles: dict[str, Profile]
+    # The Jev risk score (0..1) at or above which Jev blocks; lower is stricter.
+    jev_threshold: float = Field(ge=0.0, le=1.0)
     models: dict[str, ModelConfig]
-    callers: dict[str, Caller]
+    # RBAC. permission -> tool names, and role -> permissions. Empty means no tool is allowed to
+    # anybody: deny by default. Users are not listed: their name and roles come from the token.
+    permissions: dict[_Name, list[_Text]] = Field(default_factory=dict)
+    roles: dict[_Name, list[_Text]] = Field(default_factory=dict)
     checks: dict[str, CheckSection] = Field(default_factory=dict)
     signatures: SignatureFeedConfig | None = None
     jev: JevConfig
+    # Removed keys, declared only so an old policy is rejected with a reason, not "extra input".
+    active_profile: Any = Field(default=None, exclude=True)
+    profiles: Any = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def _cross_field(self) -> Policy:
@@ -236,60 +231,51 @@ class Policy(_Strict):
             err = PydanticCustomError("policy_reference", msg)
             errors.append(InitErrorDetails(type=err, loc=loc, input=value))
 
-        if self.active_profile not in self.profiles:
-            add(("active_profile",), "profile is not defined in profiles", self.active_profile)
-        for cid, caller in self.callers.items():
-            for i, m in enumerate(caller.allowed_models):
+        for key in ("active_profile", "profiles"):
+            if getattr(self, key) is not None:
+                msg = "profiles were removed: set the top-level jev_threshold and delete this key"
+                add((key,), msg, getattr(self, key))
+        for role, granted in self.roles.items():
+            for i, permission in enumerate(granted):
+                if permission not in self.permissions:
+                    add(("roles", role, i), "permission is not defined in permissions", permission)
+        budget_roles = self.check_config("budget").params.get("roles", {})
+        if isinstance(budget_roles, dict):  # a wrong type is reported by _check_section
+            for role in budget_roles:
+                if role not in self.roles:
+                    add(("checks", "budget", "roles", role), "role is not defined in roles", role)
+        allowed_models = self.check_config("permissions").params.get("allowed_models", [])
+        if isinstance(allowed_models, list):  # a wrong type is reported by _check_section
+            for i, m in enumerate(allowed_models):
                 if m not in self.models:
-                    add(("callers", cid, "allowed_models", i), "model is not defined in models", m)
+                    loc = ("checks", "permissions", "allowed_models", i)
+                    add(loc, "model is not defined in models", m)
         for cid, section in self.checks.items():
-            _check_section(("checks", cid), cid, section.modes, section.params, add)
-        for name, profile in self.profiles.items():
-            for cid, modes in profile.checks.items():
-                _check_section(("profiles", name, "checks", cid), cid, modes, {}, add)
+            _check_section(("checks", cid), cid, section.params, add)
         self._check_pii_before_jev(add)
         if errors:
             raise ValidationError.from_exception_data("Policy", errors)
         return self
 
     def _check_pii_before_jev(self, add: _Add) -> None:
-        """Wherever jev is on, under any profile, pii_secrets must be on too (any mode redacts
-        the copy the later checks see). Otherwise raw PII would be sent to Jev."""
-        offending: dict[tuple[str | int, ...], list[str]] = {}
-        for name, profile in self.profiles.items():
-            for cp in Checkpoint:
-                if cp not in CHECK_SPECS[_JEV].checkpoints:
-                    continue
-                if self._mode_in(profile, _JEV, cp) == Mode.OFF:
-                    continue
-                if self._mode_in(profile, _PII, cp) != Mode.OFF:
-                    continue
-                # Point at the key that turned pii_secrets off for this profile.
-                if cp in profile.checks.get(_PII, {}):
-                    loc: tuple[str | int, ...] = ("profiles", name, "checks", _PII, cp.value)
-                else:
-                    loc = ("checks", _PII, cp.value)
-                offending.setdefault(loc, []).append(name)
-        for loc, names in offending.items():
-            at = loc[-1]
+        """Where jev is on, pii_secrets must be on too: it redacts the copy the later checks see.
+        Otherwise raw PII would be sent to Jev."""
+        if not self.enabled(_JEV):
+            return
+        if not self.enabled(_PII):
             add(
-                loc,
-                f"pii_secrets is off at {at} while jev is on there (profile {', '.join(names)}): "
-                f"nothing would redact PII before it is sent to Jev. Turn pii_secrets on at {at} "
-                "(monitor is enough) or turn jev off there",
-                Mode.OFF.value,
+                ("checks", _PII),
+                "pii_secrets is off while jev is on: nothing would redact PII before it is sent "
+                "to Jev. Add a pii_secrets section or remove the jev section",
+                None,
             )
+            return
         # A role pii_secrets skips is never redacted, so Jev must not be sent that role either.
         pii_skips = self.check_config(_PII).params.get("skip_roles", [])
         jev_skips = self.check_config(_JEV).params.get("skip_roles", [])
         if isinstance(pii_skips, list) and isinstance(jev_skips, list):
             missing = sorted(set(map(str, pii_skips)) - set(map(str, jev_skips)))
-            jev_on = any(
-                self._mode_in(profile, _JEV, cp) != Mode.OFF
-                for profile in self.profiles.values()
-                for cp in CHECK_SPECS[_JEV].checkpoints
-            )
-            if missing and jev_on:
+            if missing:
                 add(
                     ("checks", _JEV, "skip_roles"),
                     f"pii_secrets skips {', '.join(missing)}, so that text is never redacted; "
@@ -297,25 +283,22 @@ class Policy(_Strict):
                     jev_skips,
                 )
 
-    @property
-    def profile(self) -> Profile:
-        return self.profiles[self.active_profile]
+    def enabled(self, check_id: str) -> bool:
+        """A check is on when its section exists under `checks`."""
+        return check_id in self.checks
 
     def check_config(self, check_id: str) -> CheckSection:
         return self.checks.get(check_id, CheckSection())
 
-    def mode(self, check_id: str, checkpoint: Checkpoint) -> Mode:
-        """Effective mode: the active profile's override wins over the check's base mode."""
-        return self._mode_in(self.profile, check_id, checkpoint)
+    def allowed_tools(self, roles: Iterable[str]) -> frozenset[str]:
+        """The tools the given roles may use: the union over their permissions.
 
-    def _mode_in(self, profile: Profile, check_id: str, checkpoint: Checkpoint) -> Mode:
-        override = profile.checks.get(check_id, {}).get(checkpoint)
-        return override if override is not None else self.check_config(check_id).mode(checkpoint)
-
-    def caller_for_key(self, api_key: str) -> tuple[str, Caller] | None:
-        """Resolve a bearer key to (caller_id, Caller) via env vars. An empty env never matches."""
-        for cid, caller in self.callers.items():
-            expected = os.environ.get(caller.api_key_env, "")
-            if expected and expected == api_key:
-                return cid, caller
-        return None
+        A role the policy does not define grants nothing, so a stale or forged role name in a
+        token can never widen access.
+        """
+        return frozenset(
+            tool
+            for role in roles
+            for permission in self.roles.get(role, [])
+            for tool in self.permissions.get(permission, [])
+        )

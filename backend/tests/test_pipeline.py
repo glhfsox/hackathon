@@ -10,13 +10,13 @@ from app.checks.base import CheckContext, Signature, make_result
 from app.checks.jev import CHECK as JEV
 from app.core.budget import UsageLedger
 from app.core.pipeline import (
-    apply_mode,
     apply_redactions,
     build_context,
     conversation_id,
     detect_reply_checkpoint,
     detect_request_checkpoint,
     run_checkpoint,
+    to_action,
 )
 from app.models import (
     Action,
@@ -25,7 +25,6 @@ from app.models import (
     CheckResult,
     DecidedBy,
     Message,
-    Mode,
     Redaction,
     ToolCall,
     Usage,
@@ -85,18 +84,8 @@ def _policy(checks: dict[str, Any], version: str = "t1", price: float = 0.0) -> 
     policy = Policy.model_validate(
         {
             "version": version,
-            "active_profile": "balanced",
-            "profiles": {"balanced": {"jev_threshold": 0.6}},
+            "jev_threshold": 0.6,
             "models": {"m": {"upstream_base_url": "http://x/v1", "price_per_1k_tokens": price}},
-            "callers": {
-                "demo": {
-                    "api_key_env": "DEMO_API_KEY",
-                    "role": "developer",
-                    "allowed_models": ["m"],
-                    "allowed_tools": ["run_shell"],
-                    "budgets": {"requests_per_minute": 5, "tokens_per_day": 100},
-                }
-            },
             "jev": {"fallback": {"model": "m", "base_url": "http://x/v1"}},
         }
     )
@@ -121,13 +110,13 @@ def _request(
     )
 
 
-async def _run(checks, modes: dict[str, Any], request=None, audit_sink=None, **kw):
-    policy = _policy(modes)
+async def _run(checks, sections: dict[str, Any], request=None, audit_sink=None, **kw):
+    """Run `checks` with the policy sections in `sections`: a check without one is off."""
+    policy = _policy(sections)
     return await run_checkpoint(
         request or _request(),
         policy,
         policy.version,
-        policy.callers["demo"],
         audit=audit_sink if audit_sink is not None else MemoryAuditSink(),
         checks=checks,
         **kw,
@@ -154,33 +143,20 @@ def test_detect_reply_checkpoint():
     assert detect_reply_checkpoint(Message(role="assistant", content="hi")) == Checkpoint.OUTPUT
 
 
-# --- mode table -------------------------------------------------------------------------
+# --- verdict to action -----------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("verdict", "mode", "expected"),
+    ("verdict", "expected"),
     [
-        ("allow", Mode.MONITOR, Action.ALLOW),
-        ("allow", Mode.REDACT, Action.ALLOW),
-        ("allow", Mode.BLOCK, Action.ALLOW),
-        ("redact", Mode.MONITOR, Action.FLAG),
-        ("redact", Mode.REDACT, Action.REDACT),
-        ("redact", Mode.BLOCK, Action.BLOCK),
-        ("block", Mode.MONITOR, Action.FLAG),
-        ("block", Mode.REDACT, Action.BLOCK),
-        ("block", Mode.BLOCK, Action.BLOCK),
-        ("error", Mode.MONITOR, Action.FLAG),
-        ("error", Mode.REDACT, Action.BLOCK),
-        ("error", Mode.BLOCK, Action.BLOCK),
+        ("allow", Action.ALLOW),
+        ("redact", Action.REDACT),
+        ("block", Action.BLOCK),
+        ("error", Action.BLOCK),  # never allow on an error
     ],
 )
-def test_mode_table(verdict, mode, expected):
-    assert apply_mode(verdict, mode) == expected
-
-
-def test_mode_off_is_never_applied():
-    with pytest.raises(ValueError):
-        apply_mode("block", Mode.OFF)
+def test_verdict_to_action(verdict, expected):
+    assert to_action(verdict) == expected
 
 
 # --- ordering, stopping, skipping -------------------------------------------------------
@@ -188,8 +164,8 @@ def test_mode_off_is_never_applied():
 
 async def test_checks_run_in_cost_order():
     checks = [FakeCheck("c", 3), FakeCheck("a", 1), FakeCheck("b", 2)]
-    modes = {cid: {"input": "block"} for cid in "abc"}
-    decision, _ = await _run(checks, modes)
+    sections = {cid: {} for cid in "abc"}
+    decision, _ = await _run(checks, sections)
     assert [r.check for r in decision.results] == ["a", "b", "c"]
     assert decision.action == Action.ALLOW
     assert decision.blocked_by is None
@@ -198,60 +174,45 @@ async def test_checks_run_in_cost_order():
 async def test_first_block_stops_later_checks():
     first = FakeCheck("first", 1, "block")
     later = FakeCheck("later", 2)
-    decision, _ = await _run(
-        [later, first], {"first": {"input": "block"}, "later": {"input": "block"}}
-    )
+    decision, _ = await _run([later, first], {"first": {}, "later": {}})
     assert decision.action == Action.BLOCK
     assert decision.blocked_by == "first"
     assert [r.check for r in decision.results] == ["first"]
     assert later.seen == []
 
 
-async def test_monitor_block_does_not_stop_the_pipeline():
-    first = FakeCheck("first", 1, "block")
-    later = FakeCheck("later", 2)
-    decision, _ = await _run(
-        [first, later], {"first": {"input": "monitor"}, "later": {"input": "block"}}
-    )
-    assert [r.action for r in decision.results] == [Action.FLAG, Action.ALLOW]
-    assert decision.action == Action.FLAG
-    assert decision.blocked_by is None
-
-
 async def test_off_and_not_applicable_checks_are_skipped():
+    # A check without a policy section is off; an enabled one runs only where it applies.
     off = FakeCheck("off", 1, "block")
-    unconfigured = FakeCheck("unconfigured", 2, "block")
-    elsewhere = FakeCheck("elsewhere", 3, "block", checkpoints=frozenset({Checkpoint.OUTPUT}))
-    runs = FakeCheck("runs", 4)
-    modes = {"off": {"input": "off"}, "elsewhere": {"input": "block"}, "runs": {"input": "block"}}
-    decision, _ = await _run([off, unconfigured, elsewhere, runs], modes)
+    elsewhere = FakeCheck("elsewhere", 2, "block", checkpoints=frozenset({Checkpoint.OUTPUT}))
+    runs = FakeCheck("runs", 3)
+    decision, _ = await _run([off, elsewhere, runs], {"elsewhere": {}, "runs": {}})
     assert [r.check for r in decision.results] == ["runs"]
-    assert off.seen == unconfigured.seen == elsewhere.seen == []
+    assert off.seen == elsewhere.seen == []
 
 
-async def test_settings_are_the_check_params_without_modes():
+async def test_settings_are_the_check_params():
     check = FakeCheck("a", 1)
-    await _run([check], {"a": {"input": "block", "limit": 3, "types": ["email"]}})
+    await _run([check], {"a": {"limit": 3, "types": ["email"]}})
     assert check.settings == {"limit": 3, "types": ["email"]}
 
 
 # --- errors and timeouts ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("mode", "expected"), [("block", Action.BLOCK), ("monitor", Action.FLAG)])
-async def test_exception_becomes_error(mode, expected):
+async def test_exception_becomes_error_and_blocks():
     boom = FakeCheck("boom", 1, raises=RuntimeError("feed exploded"))
-    decision, _ = await _run([boom], {"boom": {"input": mode}})
+    decision, _ = await _run([boom], {"boom": {}})
     (result,) = decision.results
     assert result.verdict == "error"
-    assert result.action == expected
+    assert result.action == Action.BLOCK
     assert "feed exploded" in result.reason
-    assert decision.action == expected
+    assert decision.blocked_by == "boom"
 
 
 async def test_timeout_becomes_error():
     slow = FakeCheck("slow", 1, sleep_s=1.0)
-    decision, _ = await _run([slow], {"slow": {"input": "block", "timeout_s": 0.01}})
+    decision, _ = await _run([slow], {"slow": {"timeout_s": 0.01}})
     (result,) = decision.results
     assert result.verdict == "error"
     assert result.action == Action.BLOCK
@@ -262,7 +223,7 @@ async def test_timeout_becomes_error():
 async def test_invalid_redaction_fails_closed():
     bad = [Redaction(kind="X", start=0, end=99, replacement="[X]", message_index=0)]
     check = FakeCheck("bad", 1, "redact", redactions=bad)
-    decision, out = await _run([check], {"bad": {"input": "redact"}})
+    decision, out = await _run([check], {"bad": {}})
     assert decision.results[0].verdict == "error"
     assert decision.action == Action.BLOCK
     assert out.messages[0].content == "hello"
@@ -281,74 +242,12 @@ async def test_redaction_is_seen_by_later_checks_and_returned():
     original = _request(content="my ssn is 123-45-6789 ok")
     redactor = FakeCheck("redactor", 1, "redact", redactions=[_red(10, 21, "SSN")])
     judge_like = FakeCheck("judge_like", 2)
-    modes = {"redactor": {"input": "redact"}, "judge_like": {"input": "block"}}
-    decision, out = await _run([redactor, judge_like], modes, request=original)
+    sections = {"redactor": {}, "judge_like": {}}
+    decision, out = await _run([redactor, judge_like], sections, request=original)
     assert judge_like.seen[0].messages[0].content == "my ssn is [REDACTED:SSN] ok"
     assert out.messages[0].content == "my ssn is [REDACTED:SSN] ok"
     assert original.messages[0].content == "my ssn is 123-45-6789 ok"
     assert decision.action == Action.REDACT
-
-
-async def test_monitor_redaction_reaches_later_checks_but_not_upstream():
-    # Monitor must not change the request, but a later check (Jev) must still never see the
-    # sensitive text (constitution V).
-    redactor = FakeCheck("redactor", 1, "redact", redactions=[_red(0, 5)])
-    later = FakeCheck("later", 2)
-    modes = {"redactor": {"input": "monitor"}, "later": {"input": "block"}}
-    decision, out = await _run([redactor, later], modes)
-    assert decision.results[0].action == Action.FLAG
-    assert later.seen[0].messages[0].content == "[REDACTED:X]"
-    assert out.messages[0].content == "hello"
-
-
-async def test_enforced_redaction_after_a_monitor_redaction():
-    # SSN is only monitored; EMAIL is enforced. The EMAIL span is an offset into the text the
-    # check saw, which already carries the monitor redaction, so it cannot be mapped back onto
-    # the raw text: the message it touches is forwarded as checked (more redacted, never less).
-    msgs = [
-        Message(role="user", content="id 123-45-6789"),
-        Message(role="user", content="id 123-45-6789 at a@b.co"),
-    ]
-    request = CanonicalRequest(
-        request_id="req-1", caller_id="demo", model="m", checkpoint=Checkpoint.INPUT, messages=msgs
-    )
-    monitored = FakeCheck(
-        "monitored", 1, "redact", redactions=[_red(3, 14, "SSN", 0), _red(3, 14, "SSN", 1)]
-    )
-    # "id [REDACTED:SSN] at " is 21 characters long.
-    enforced = FakeCheck("enforced", 2, "redact", redactions=[_red(21, 27, "EMAIL", 1)])
-    later = FakeCheck("later", 3)
-    modes = {
-        "monitored": {"input": "monitor"},
-        "enforced": {"input": "redact"},
-        "later": {"input": "block"},
-    }
-
-    decision, out = await _run([monitored, enforced, later], modes, request=request)
-
-    assert [r.action for r in decision.results] == [Action.FLAG, Action.REDACT, Action.ALLOW]
-    assert [m.content for m in later.seen[0].messages] == [
-        "id [REDACTED:SSN]",
-        "id [REDACTED:SSN] at [REDACTED:EMAIL]",
-    ]
-    assert [m.content for m in out.messages] == [
-        "id 123-45-6789",
-        "id [REDACTED:SSN] at [REDACTED:EMAIL]",
-    ]
-    assert [m.content for m in request.messages] == ["id 123-45-6789", "id 123-45-6789 at a@b.co"]
-
-
-async def test_invalid_redaction_in_monitor_mode_is_an_error_flag():
-    bad = [Redaction(kind="X", start=0, end=99, replacement="[X]", message_index=0)]
-    check = FakeCheck("bad", 1, "redact", redactions=bad)
-    later = FakeCheck("later", 2)
-    decision, out = await _run(
-        [check, later], {"bad": {"input": "monitor"}, "later": {"input": "block"}}
-    )
-    assert (decision.results[0].verdict, decision.results[0].action) == ("error", Action.FLAG)
-    assert decision.results[0].redactions == []
-    assert later.seen[0].messages[0].content == "hello"
-    assert out.messages[0].content == "hello"
 
 
 def test_apply_redactions_right_to_left_and_reply():
@@ -392,19 +291,18 @@ def test_apply_redactions_rejects_bad_targets():
     ("verdicts", "expected"),
     [
         ([], Action.ALLOW),
-        ([("allow", "block")], Action.ALLOW),
-        ([("allow", "block"), ("block", "monitor")], Action.FLAG),
-        ([("block", "monitor"), ("redact", "redact"), ("allow", "block")], Action.REDACT),
-        ([("redact", "redact"), ("block", "block")], Action.BLOCK),
+        (["allow"], Action.ALLOW),
+        (["allow", "redact", "allow"], Action.REDACT),
+        (["redact", "block"], Action.BLOCK),
     ],
 )
 async def test_decision_takes_the_strongest_action(verdicts, expected):
-    checks, modes = [], {}
-    for i, (verdict, mode) in enumerate(verdicts):
+    checks, sections = [], {}
+    for i, verdict in enumerate(verdicts):
         redactions = [_red(0, 1)] if verdict == "redact" else None
         checks.append(FakeCheck(f"c{i}", i, verdict, redactions=redactions))
-        modes[f"c{i}"] = {"input": mode}
-    decision, _ = await _run(checks, modes)
+        sections[f"c{i}"] = {}
+    decision, _ = await _run(checks, sections)
     assert decision.action == expected
     assert decision.checkpoint == Checkpoint.INPUT
     assert decision.request_id == "req-1"
@@ -412,8 +310,8 @@ async def test_decision_takes_the_strongest_action(verdicts, expected):
 
 async def test_one_audit_record_per_result(audit_sink):
     checks = [FakeCheck("a", 1), FakeCheck("b", 2, "block"), FakeCheck("c", 3)]
-    modes = {cid: {"input": "block"} for cid in "abc"}
-    decision, _ = await _run(checks, modes, audit_sink=audit_sink)
+    sections = {cid: {} for cid in "abc"}
+    decision, _ = await _run(checks, sections, audit_sink=audit_sink)
     records = audit_sink.records
     assert [r.check for r in decision.results] == ["a", "b"]
     assert [r.check for r in records] == ["a", "b", "turn_summary"]
@@ -444,10 +342,10 @@ async def test_usage_only_on_first_reply_record(checkpoint, with_usage):
     elif checkpoint == Checkpoint.OUTPUT:
         reply = Message(role="assistant", content="done")
     sink = MemoryAuditSink()
-    modes = {cid: {checkpoint.value: "block"} for cid in "ab"}
+    sections = {cid: {} for cid in "ab"}
     await _run(
         [FakeCheck("a", 1), FakeCheck("b", 2)],
-        modes,
+        sections,
         request=_request(checkpoint, reply=reply),
         audit_sink=sink,
         usage_tokens=1200,
@@ -508,10 +406,10 @@ async def test_turn_summary_row_at_each_checkpoint(
     checkpoint, step, messages, tool_calls, tools, total, with_usage
 ):
     sink = MemoryAuditSink()
-    modes = {cid: {checkpoint.value: "block"} for cid in "ab"}
+    sections = {cid: {} for cid in "ab"}
     decision, _ = await _run(
         [FakeCheck("a", 1), FakeCheck("b", 2)],
-        modes,
+        sections,
         request=_session_request(checkpoint),
         audit_sink=sink,
         usage=Usage(prompt_tokens=900, completion_tokens=300, upstream_latency_ms=250.0),
@@ -555,7 +453,7 @@ async def test_turn_summary_is_written_when_every_check_is_off():
     off = FakeCheck("off", 1, "block")
     decision, _ = await _run(
         [off],
-        {"off": {"output": "off"}},
+        {},
         request=_session_request(Checkpoint.OUTPUT),
         audit_sink=sink,
         usage=Usage(prompt_tokens=100, completion_tokens=20),
@@ -577,7 +475,7 @@ async def test_turn_summary_of_a_rule_block():
         FakeCheck("a", 1, "redact", redactions=[_red(0, 1)]),
         FakeCheck("tool_args", 2, "block"),
     ]
-    await _run(checks, {"a": {"input": "redact"}, "tool_args": {"input": "block"}}, audit_sink=sink)
+    await _run(checks, {"a": {}, "tool_args": {}}, audit_sink=sink)
     summary = sink.records[-1]
     assert (summary.action, summary.reason) == (Action.BLOCK, "blocked by tool_args")
     assert (summary.blocked_by, summary.decided_by, summary.score) == (
@@ -592,7 +490,7 @@ async def test_turn_summary_credits_jev_for_its_block(decided_by):
     sink = MemoryAuditSink()
     await _run(
         [JEV],
-        {"jev": {"input": "block"}},
+        {"jev": {}},
         audit_sink=sink,
         judge=FakeJudge(score=0.9, decided_by=decided_by),
     )
@@ -601,22 +499,16 @@ async def test_turn_summary_credits_jev_for_its_block(decided_by):
     assert (summary.decided_by, summary.score) == (DecidedBy(decided_by), 0.9)
 
 
-async def test_turn_summary_reason_names_redacting_and_flagging_checks():
+async def test_turn_summary_reason_names_redacting_checks():
     sink = MemoryAuditSink()
     checks = [
         FakeCheck("r1", 1, "redact", redactions=[_red(0, 1)]),
         FakeCheck("r2", 2, "redact", redactions=[_red(2, 3)]),
-        FakeCheck("m", 3, "block"),
+        FakeCheck("a", 3),
     ]
-    modes = {"r1": {"input": "redact"}, "r2": {"input": "redact"}, "m": {"input": "monitor"}}
-    await _run(checks, modes, audit_sink=sink)
+    await _run(checks, {"r1": {}, "r2": {}, "a": {}}, audit_sink=sink)
     redacted = sink.records[-1]
     assert (redacted.action, redacted.reason) == (Action.REDACT, "redacted by r1, r2")
-
-    await _run([FakeCheck("m", 1, "block")], {"m": {"input": "monitor"}}, audit_sink=sink)
-    flagged = sink.records[-1]
-    assert (flagged.action, flagged.reason) == (Action.FLAG, "flagged by m")
-    assert flagged.decided_by == DecidedBy.RULES
 
 
 def test_conversation_id_is_stable_across_steps_and_differs_by_caller():
@@ -631,7 +523,7 @@ def test_conversation_id_is_stable_across_steps_and_differs_by_caller():
 
 
 async def test_cost_is_computed_from_the_policy_price():
-    policy = _policy({"a": {"output": "block"}}, price=0.25)
+    policy = _policy({"a": {}}, price=0.25)
 
     async def summary(**usage_kw: Any):
         sink = MemoryAuditSink()
@@ -639,7 +531,6 @@ async def test_cost_is_computed_from_the_policy_price():
             _session_request(Checkpoint.OUTPUT),
             policy,
             policy.version,
-            policy.callers["demo"],
             audit=sink,
             checks=[FakeCheck("a", 1)],
             **usage_kw,
@@ -660,16 +551,12 @@ async def test_cost_is_computed_from_the_policy_price():
 # --- context ----------------------------------------------------------------------------
 
 
-def test_build_context_from_policy_and_caller():
+def test_build_context_from_policy():
     policy = _policy({})
     ledger = UsageLedger()
     judge = FakeJudge()
     sigs = [Signature(id="s1", pattern=re.compile("x"))]
-    ctx = build_context(policy, policy.callers["demo"], ledger=ledger, signatures=sigs, judge=judge)
-    assert ctx.caller_role == "developer"
-    assert ctx.allowed_models == ["m"]
-    assert ctx.allowed_tools == ["run_shell"]
-    assert (ctx.requests_per_minute, ctx.tokens_per_day, ctx.cost_per_day) == (5, 100, None)
+    ctx = build_context(policy, ledger=ledger, signatures=sigs, judge=judge)
     assert ctx.ledger is ledger
     assert ctx.signatures is sigs
     assert ctx.jev_threshold == 0.6

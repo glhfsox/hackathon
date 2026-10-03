@@ -10,9 +10,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.openai import OpenAIAdapter
-from app.api import audit, chat, health, metrics, policy, tools
+from app.api import audit, chat, health, metrics, policy
 from app.api.errors import agent_validation_handler
 from app.core.audit_reader import JsonlAuditReader
+from app.core.auth import JwtAuthenticator, secret_from_env
 from app.core.budget import UsageLedger
 from app.core.jev import JevClient
 from app.core.pipeline import Pipeline
@@ -70,8 +71,18 @@ def _real_app(
                 app.state.upstream = upstream
                 app.state.judge = jev
                 app.state.audit_reader = JsonlAuditReader(logs)
+                # Raises when JWT_SECRET is unset: the layer does not run without a way to
+                # verify tokens.
+                authenticator = JwtAuthenticator(secret_from_env())
                 app.state.proxy_service = ProxyService(
-                    OpenAIAdapter(), pipeline, upstream, store, ledger, audit_sink, feed
+                    OpenAIAdapter(),
+                    pipeline,
+                    upstream,
+                    store,
+                    ledger,
+                    audit_sink,
+                    authenticator,
+                    feed,
                 )
                 exporter = StatsExporter(logs, lambda: store.current().policy)
                 store.start()
@@ -118,7 +129,6 @@ def create_app(
     app.add_exception_handler(RequestValidationError, agent_validation_handler)
     app.include_router(health.router)
     app.include_router(chat.router)
-    app.include_router(tools.router)
     app.include_router(policy.router)
     app.include_router(audit.router)
     app.include_router(metrics.router)

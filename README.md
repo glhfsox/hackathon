@@ -1,6 +1,6 @@
 # AI Control Layer
 
-Middleware that secures what crosses the boundaries between AI agents, models and tools. For every prompt, tool call, tool result and answer it decides to **allow, redact or block**, explains why, and audits the decision. Agents connect by changing their OpenAI `base_url` and API key.
+Middleware that secures what crosses the boundaries between AI agents, models and tools. For every prompt, tool call, tool result and answer it decides to **allow, redact or block**, explains why, and audits the decision. Agents connect by changing their OpenAI `base_url` and sending a signed JWT as the API key.
 
 Design: [docs/architecture.md](docs/architecture.md). API: [contracts/](contracts/README.md). Team rules: [AGENTS.md](AGENTS.md).
 
@@ -10,9 +10,10 @@ You need Docker and [Ollama](https://ollama.com) on the host, with a model that 
 
 ```sh
 ollama pull gemma4                      # once
-docker compose run --rm init            # once: writes .env with random API keys
 docker compose up -d --build            # control layer on :8000, dashboard on :5173
 ```
+
+`JWT_SECRET` defaults to a public demo value. To use your own, run `docker compose run --rm init` once (it writes a random one to `.env`), then `docker compose up -d --build`.
 
 On Linux, start Ollama with `OLLAMA_HOST=0.0.0.0` so containers can reach it. Check the layer: `curl http://localhost:8000/api/health`.
 
@@ -20,7 +21,7 @@ Open the dashboard at <http://localhost:5173>. It shows the security posture, bl
 
 ## Try the test application
 
-`test_app` is a two-agent treasury application: the **Analyst** reads payments and documents, and the **Operator** acts on the Analyst's answer. In Docker, both agents run through the control layer. Every tool call is checked by the tool guard before it runs, so a blocked tool is never executed.
+`test_app` is a two-agent treasury application: the **Analyst** reads payments and documents, and the **Operator** acts on the Analyst's answer. In Docker, both agents run through the control layer, each with its own JWT signed with `JWT_SECRET`. Every tool call in a model reply is checked by the layer before the agent sees it, so a blocked tool is never executed.
 
 ```sh
 docker compose run --rm test-app --list                 # the scenarios

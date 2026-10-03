@@ -55,7 +55,7 @@ def _judge(score: float, decided_by: str = "jev", categories: list[str] | None =
 
 
 def _ctx(judge, threshold: float = 0.6) -> CheckContext:
-    return CheckContext(caller_role="developer", jev_threshold=threshold, judge=judge)
+    return CheckContext(jev_threshold=threshold, judge=judge)
 
 
 def _verdict(score: float, reason: str, decided_by: str = "jev", categories=None):
@@ -102,7 +102,12 @@ class CachingJudge(MockJudge):
 
 def test_contract():
     assert CHECK.id == "jev" and CHECK.cost_rank == 7
-    assert CHECK.checkpoints == {Checkpoint.INPUT, Checkpoint.TOOL_RESULT, Checkpoint.OUTPUT}
+    assert CHECK.checkpoints == {
+        Checkpoint.INPUT,
+        Checkpoint.TOOL_CALL,
+        Checkpoint.TOOL_RESULT,
+        Checkpoint.OUTPUT,
+    }
 
 
 async def test_score_equal_to_threshold_blocks():
@@ -137,7 +142,7 @@ async def test_judge_input_has_text_and_context():
 
     (inp,) = judge.calls
     assert inp.checkpoint == Checkpoint.INPUT and inp.text == "hello there"
-    assert "developer" in inp.context
+    assert "message role: user" in inp.context
     assert "query_customers" in inp.context and "run_shell" in inp.context
 
 

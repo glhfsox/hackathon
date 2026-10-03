@@ -20,7 +20,7 @@ import app.checks
 from app.checks.base import Check, Signature
 from app.core.budget import UsageLedger
 from app.core.pipeline import run_checkpoint
-from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolDef
+from app.models import Action, Caller, CanonicalRequest, Checkpoint, Message, ToolDef
 from app.models.policy import Policy
 from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
@@ -67,7 +67,8 @@ class JudgeSpec(_Strict):
 class Case(_Strict):
     name: str
     checkpoint: Checkpoint
-    caller: str = "demo"
+    # The token's roles: they decide the allowed tools and the budget.
+    roles: list[str] = Field(default_factory=lambda: ["developer"])
     model: str = "gemma4"
     messages: list[Message]
     tools: list[ToolDef] = Field(default_factory=list)
@@ -113,7 +114,10 @@ PARAMS = [
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(base)
     for key, value in patch.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
+        if value is None:
+            # `null` removes the key: how a case turns a check off.
+            out.pop(key, None)
+        elif isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _deep_merge(out[key], value)
         else:
             out[key] = copy.deepcopy(value)
@@ -152,7 +156,7 @@ async def test_case(raw: dict[str, Any]) -> None:
     policy = Policy.model_validate(_deep_merge(BASE_POLICY, case.policy_patch))
     request = CanonicalRequest(
         request_id=f"case-{case.name}",
-        caller_id=case.caller,
+        caller_id="demo",
         model=case.model,
         checkpoint=case.checkpoint,
         messages=case.messages,
@@ -169,8 +173,12 @@ async def test_case(raw: dict[str, Any]) -> None:
         request,
         policy,
         policy.version,
-        policy.callers[case.caller],
-        ledger=_ledger(case.caller, case.usage),
+        Caller(
+            role=", ".join(case.roles) or "none",
+            roles=case.roles,
+            allowed_tools=sorted(policy.allowed_tools(case.roles)),
+        ),
+        ledger=_ledger("demo", case.usage),
         signatures=_load_signatures(policy),
         judge=judge,
         audit=MemoryAuditSink(),

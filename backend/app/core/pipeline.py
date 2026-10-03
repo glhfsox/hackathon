@@ -21,25 +21,26 @@ from app.checks.base import (
     Judge,
     Signature,
     make_result,
+    tool_call_view,
 )
 from app.core.budget import UsageLedger
 from app.models import (
     TURN_SUMMARY,
     Action,
     AuditRecord,
+    Caller,
     CanonicalRequest,
     Checkpoint,
     CheckResult,
     DecidedBy,
     Decision,
     Message,
-    Mode,
     PolicySnapshot,
     Redaction,
     Usage,
     Verdict,
 )
-from app.models.policy import Caller, Policy
+from app.models.policy import Policy
 from app.protocols.audit import AuditSink
 
 logger = logging.getLogger(__name__)
@@ -77,17 +78,12 @@ def detect_reply_checkpoint(reply: Message) -> Checkpoint:
     return Checkpoint.TOOL_CALL if reply.tool_calls else Checkpoint.OUTPUT
 
 
-def apply_mode(verdict: Verdict, mode: Mode) -> Action:
-    """The mode table of docs/architecture.md §4. Errors fail closed outside monitor mode."""
-    if mode == Mode.OFF:
-        raise ValueError("mode 'off' is never applied: the pipeline skips the check")
+def to_action(verdict: Verdict) -> Action:
+    """A check's verdict as the pipeline's action (docs/architecture.md §4). There are no modes:
+    a finding blocks, a redaction is applied, and an error fails closed."""
     if verdict == "allow":
         return Action.ALLOW
-    if mode == Mode.MONITOR:
-        return Action.FLAG
-    # In block mode a finding stops the request even when it could be redacted: that is what
-    # makes `strict` stricter than `balanced` for PII.
-    return Action.REDACT if verdict == "redact" and mode == Mode.REDACT else Action.BLOCK
+    return Action.REDACT if verdict == "redact" else Action.BLOCK
 
 
 def apply_redactions(request: CanonicalRequest, redactions: list[Redaction]) -> CanonicalRequest:
@@ -102,6 +98,11 @@ def apply_redactions(request: CanonicalRequest, redactions: list[Redaction]) -> 
     for r in redactions:
         by_index.setdefault(r.message_index, []).append(r)
     for index, group in by_index.items():
+        if index == REPLY_INDEX and out.checkpoint == Checkpoint.TOOL_CALL:
+            # At tool_call the checks read the tool-call view: redact that copy, never the
+            # arguments the agent will run.
+            out.tool_call_view = _redact_text(tool_call_view(out), group)
+            continue
         if index == REPLY_INDEX:
             target = out.reply
         elif 0 <= index < len(out.messages):
@@ -132,9 +133,13 @@ def _redact_text(text: str, redactions: list[Redaction]) -> str:
     return text
 
 
+# A request without a caller may use nothing: no tool, no budget (fail closed).
+NO_CALLER = Caller(role="none", allowed_tools=[])
+
+
 def build_context(
     policy: Policy,
-    caller: Caller,
+    caller: Caller = NO_CALLER,
     *,
     ledger: UsageLedger | None,
     signatures: list[Signature] | None,
@@ -142,14 +147,11 @@ def build_context(
 ) -> CheckContext:
     return CheckContext(
         caller_role=caller.role,
-        allowed_models=list(caller.allowed_models),
+        roles=list(caller.roles),
         allowed_tools=list(caller.allowed_tools),
-        requests_per_minute=caller.budgets.requests_per_minute,
-        tokens_per_day=caller.budgets.tokens_per_day,
-        cost_per_day=caller.budgets.cost_per_day,
         ledger=ledger,
         signatures=signatures,
-        jev_threshold=policy.profile.jev_threshold,
+        jev_threshold=policy.jev_threshold,
         judge=judge,
     )
 
@@ -186,7 +188,7 @@ async def run_checkpoint(
     request: CanonicalRequest,
     policy: Policy,
     policy_version: str,
-    caller: Caller,
+    caller: Caller = NO_CALLER,
     *,
     ledger: UsageLedger | None = None,
     signatures: list[Signature] | None = None,
@@ -200,11 +202,9 @@ async def run_checkpoint(
     """Run every enabled check for `request.checkpoint`, cheapest first.
 
     Returns the decision and the request to forward: it carries the redactions of checks whose
-    action is `redact`. Each check sees the redactions of every check before it, whatever that
-    check's mode, so Jev only ever gets redacted text, also when pii_secrets only monitors.
-    A redaction's offsets point into the copy the checks saw. Where that copy already carries a
-    monitor-only redaction they cannot be mapped back onto the forwarded text, so every message
-    an enforced redaction touches is forwarded as the checks saw it: more redacted, never less.
+    action is `redact`. Each check sees the redactions of every check before it, so Jev only ever
+    gets redacted text. A redaction's offsets point into the copy the checks saw, so every message
+    a redaction touches is forwarded as the checks saw it.
 
     Writes one audit row per check result, then always one `turn_summary` row for the
     checkpoint (also when no check is enabled). Upstream usage goes on that row at the reply
@@ -218,19 +218,25 @@ async def run_checkpoint(
     candidates = ordered_checks() if checks is None else checks
     results: list[CheckResult] = []
     blocked_by: str | None = None
-    checked = request  # what the next check sees: every redaction so far, any mode
-    forwarded = request  # what goes upstream: enforced redactions only
+    checked = request  # what the next check sees: every redaction so far
+    forwarded = request  # what goes on: the messages a redaction touched, as the checks saw them
+    if checkpoint == Checkpoint.TOOL_CALL:
+        checked = request.model_copy(update={"tool_call_view": tool_call_view(request)})
 
     for check in sorted(candidates, key=lambda c: c.cost_rank):
         if checkpoint not in check.checkpoints:
             continue
-        mode = policy.mode(check.id, checkpoint)
-        if mode == Mode.OFF:
+        if not policy.enabled(check.id):
             continue
         # A copy, so a check cannot change the policy snapshot other requests share.
         settings = dict(policy.check_config(check.id).params)
         result = await _run_check(check, checked, settings, ctx)
-        result.action = apply_mode(result.verdict, mode)
+        result.action = to_action(result.verdict)
+        if checkpoint == Checkpoint.TOOL_CALL and result.action == Action.REDACT:
+            # Only the tool-call view the later checks read is redacted; the agent gets its call
+            # unchanged, so the audit must not claim a redaction.
+            result.action = Action.ALLOW
+            result.reason = f"{result.reason} in the copy the checks read; the call is unchanged"
         if result.redactions:
             try:
                 checked = apply_redactions(checked, result.redactions)
@@ -248,7 +254,7 @@ async def run_checkpoint(
                 result.verdict = "error"
                 result.reason = f"check error: invalid redaction: {exc}"
                 result.redactions = []
-                result.action = apply_mode("error", mode)
+                result.action = to_action("error")
         results.append(result)
         await audit.write(_audit_record(request, result, policy_version))
         if result.action == Action.BLOCK:
@@ -372,7 +378,7 @@ def _turn_summary(
 class Pipeline:
     """The check pipeline bound to the application's long-lived dependencies.
 
-    The proxy and the tool guard call `run` once per checkpoint with the policy snapshot the
+    The proxy calls `run` once per checkpoint with the policy snapshot the
     request took at its start, so a hot reload never mixes two policy versions in one request.
     """
 
@@ -395,7 +401,7 @@ class Pipeline:
         self,
         request: CanonicalRequest,
         snapshot: PolicySnapshot,
-        caller: Caller,
+        caller: Caller = NO_CALLER,
         *,
         usage: Usage | None = None,
     ) -> tuple[Decision, CanonicalRequest]:

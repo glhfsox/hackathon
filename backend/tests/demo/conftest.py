@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from demo import tools
+from tests.conftest import token
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +33,9 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tools.init_workspace()
 
 
-def bridged_client(gateway: TestClient, api_key: str) -> openai.OpenAI:
+def bridged_client(gateway: TestClient, roles: tuple[str, ...] = ("developer",)) -> openai.OpenAI:
+    """An OpenAI client that reaches `gateway` with its own token: one per agent, by role."""
+
     def forward(request: httpx2.Request) -> httpx2.Response:
         resp = gateway.request(
             request.method,
@@ -51,7 +54,7 @@ def bridged_client(gateway: TestClient, api_key: str) -> openai.OpenAI:
 
     return openai.OpenAI(
         base_url="http://gateway.test/v1",
-        api_key=api_key,
+        api_key=token(roles[0], roles),
         max_retries=0,
         http_client=httpx2.Client(transport=httpx2.MockTransport(forward)),
     )

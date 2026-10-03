@@ -5,17 +5,20 @@ python -m test_app --scenario poisoned_note
 python -m test_app --scenario all
 python -m test_app "Why is TXN-000001 held?" --role clerk
 
-Set TEST_APP_PROXY_URL (or pass --proxy) to run both agents through the control layer.
+Set TEST_APP_PROXY_URL (or pass --proxy) to run both agents through the control layer; set
+JWT_SECRET to the secret the layer verifies tokens with.
 """
 
 import argparse
 import json
 import os
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import jwt
 
 from test_app.agents import USER_ROLES, AgentRun, Step, run_pipeline
 from test_app.analyst_tools import CorpusTools
@@ -28,14 +31,13 @@ DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"  # Ollama's OpenAI-compatible API
 DEFAULT_MODEL = "gemma4"
 # A local model can take tens of seconds per call.
 CLIENT_TIMEOUT_S = 600.0
-# Proxy mode: the env var holding each agent's control-layer key. The Operator's key depends on
-# the user's role, so a clerk's Operator is a different policy caller than a treasurer's.
-ANALYST_KEY_ENV = "ANALYST_API_KEY"
-OPERATOR_KEY_ENV = {"clerk": "OPERATOR_CLERK_API_KEY", "treasurer": "OPERATOR_TREASURER_API_KEY"}
+# Proxy mode: each agent signs its own JWT with JWT_SECRET. The Operator's role is the user's
+# role, so the layer's RBAC lets a clerk's Operator hold but not release a payment.
+TOKEN_TTL_S = 3600
 
 # Prompts from the design's demo-scenario table (section 4), for client CLI-0001 of the default
 # corpus, each with the user role that lets the risky action reach the Operator's tools.
-# Scenario 7 (budget) reuses any of these with a low budget on the Analyst's key, so it is not
+# Scenario 7 (budget) reuses any of these with a low budget on the analyst role, so it is not
 # listed.
 SCENARIOS = {
     "pii_summary": (
@@ -102,15 +104,16 @@ def findings(runs: list[AgentRun]) -> str:
     return ", ".join(sorted(seen)) or "-"
 
 
-def proxy_keys(roles: set[str]) -> dict[str, str] | str:
-    """Keys per agent and role from the environment, or the name of the first missing variable."""
-    names = {"analyst": ANALYST_KEY_ENV} | {role: OPERATOR_KEY_ENV[role] for role in roles}
-    keys = {}
-    for who, name in names.items():
-        if not (value := os.environ.get(name)):
-            return name
-        keys[who] = value
-    return keys
+def proxy_tokens(roles: set[str], secret: str) -> dict[str, str]:
+    """A JWT for the Analyst and one for the Operator per user role."""
+    expires = int(time.time()) + TOKEN_TTL_S
+    users = {"analyst": ("analyst", "analyst")} | {
+        role: (f"operator_{role}", role) for role in roles
+    }
+    return {
+        who: jwt.encode({"sub": sub, "roles": [role], "exp": expires}, secret, algorithm="HS256")
+        for who, (sub, role) in users.items()
+    }
 
 
 def run_one(
@@ -119,7 +122,7 @@ def run_one(
     request: str,
     role: str,
     run_dir: Path,
-    keys: dict[str, str] | None,
+    tokens: dict[str, str] | None,
 ) -> tuple[list[AgentRun], list[dict]]:
     analyst_tools = CorpusTools(args.corpus, args.client_id)
     operator = OperatorTools(run_dir)
@@ -132,7 +135,7 @@ def run_one(
         analyst_tools=analyst_tools.run,
         operator_tools_runner=operator.run,
         role=role,
-        keys={"analyst": keys["analyst"], "operator": keys[role]} if keys else None,
+        tokens={"analyst": tokens["analyst"], "operator": tokens[role]} if tokens else None,
         max_steps=args.max_steps,
         on_step=print_step,
         on_decision=print_decision,
@@ -190,13 +193,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     headers = {}
-    keys = None
+    tokens = None
     if args.proxy:
-        found = proxy_keys({role for _, _, role in jobs})
-        if isinstance(found, str):
-            print(f"proxy mode needs the API key in env var {found} (see .env)", file=sys.stderr)
+        if not (secret := os.environ.get("JWT_SECRET")):
+            print("proxy mode needs JWT_SECRET, the layer token secret (see .env)", file=sys.stderr)
             return 2
-        keys = found
+        tokens = proxy_tokens({role for _, _, role in jobs}, secret)
         base_url = args.proxy.rstrip("/") + "/"
         print(f"model: {args.model} via control layer at {base_url}")
     else:
@@ -212,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, request, role in jobs:
             if len(jobs) > 1:
                 print(f"\n=== {name}: {SCENARIOS[name][0]} ===")
-            runs, actions = run_one(client, args, request, role, started / name, keys)
+            runs, actions = run_one(client, args, request, role, started / name, tokens)
             summary.append((name, role, runs, actions))
 
     if len(summary) > 1:

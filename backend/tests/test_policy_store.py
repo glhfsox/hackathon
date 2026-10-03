@@ -53,6 +53,16 @@ def _set(path: list[str], value: Any) -> Callable[[dict[str, Any]], None]:
     return mutate
 
 
+def _drop(path: list[str]) -> Callable[[dict[str, Any]], None]:
+    def mutate(raw: dict[str, Any]) -> None:
+        node = raw
+        for key in path[:-1]:
+            node = node[key]
+        del node[path[-1]]
+
+    return mutate
+
+
 def _rename(path: list[str], new: str) -> Callable[[dict[str, Any]], None]:
     """A typo in an existing key: the section keeps its content under the misspelled name."""
 
@@ -65,22 +75,36 @@ def _rename(path: list[str], new: str) -> Callable[[dict[str, Any]], None]:
     return mutate
 
 
-VALID_STRICT = _policy_yaml(_set(["active_profile"], "strict"))
+# A valid edit: a stricter Jev threshold.
+VALID_STRICT = _policy_yaml(_set(["jev_threshold"], 0.4))
 
 # (id, broken policy text, what the field-level error must point at)
 INVALID_EDITS = [
     ("unknown_key", _policy_yaml(_set(["bogus"], 1)), "bogus"),
+    # Modes and profiles were removed: an old policy must not load silently.
     (
-        "bad_mode",
-        _policy_yaml(_set(["checks", "pii_secrets", "tool_result"], "blok")),
+        "old_mode_key",
+        _policy_yaml(_set(["checks", "pii_secrets", "tool_result"], "redact")),
         "checks.pii_secrets.tool_result",
     ),
     (
-        "unknown_model",
-        _policy_yaml(_set(["callers", "demo", "allowed_models"], ["gpt-9"])),
-        "callers.demo.allowed_models",
+        "old_profiles",
+        _policy_yaml(_set(["profiles"], {"strict": {"jev_threshold": 0.4}})),
+        "profiles",
     ),
-    ("unknown_profile", _policy_yaml(_set(["active_profile"], "paranoid")), "active_profile"),
+    (
+        "unknown_model",
+        _policy_yaml(_set(["checks", "permissions", "allowed_models"], ["gpt-9"])),
+        "checks.permissions.allowed_models",
+    ),
+    # The callers section was removed: an old policy that still has it must not load silently.
+    ("callers_section", _policy_yaml(_set(["callers"], {"demo": {"role": "dev"}})), "callers"),
+    (
+        "negative_budget",
+        _policy_yaml(_set(["checks", "budget", "tokens_per_day"], -1)),
+        "checks.budget.tokens_per_day",
+    ),
+    ("bad_threshold", _policy_yaml(_set(["jev_threshold"], 1.5)), "jev_threshold"),
     ("jev_latest", _policy_yaml(_set(["jev", "model"], "jev-latest")), "jev.model"),
     (
         "typo_check_id",
@@ -93,29 +117,15 @@ INVALID_EDITS = [
         "checks.loop_detection.max_tool_cals",
     ),
     (
-        "typo_profile_check_id",
-        _policy_yaml(_rename(["profiles", "strict", "checks", "pii_secrets"], "pii_secret")),
-        "profiles.strict.checks.pii_secret",
-    ),
-    (
-        "unsupported_checkpoint",
-        _policy_yaml(_set(["checks", "budget", "output"], "block")),
-        "checks.budget.output",
-    ),
-    (
         "bad_param_type",
         _policy_yaml(_set(["checks", "jev", "max_chars"], "lots")),
         "checks.jev.max_chars",
     ),
-    (
-        "pii_off_under_jev",
-        _policy_yaml(_set(["checks", "pii_secrets", "input"], "off")),
-        "checks.pii_secrets.input",
-    ),
-    ("yaml_syntax", "version: '0.1\nactive_profile: [balanced\n", "YAML syntax error"),
+    ("pii_off_under_jev", _policy_yaml(_drop(["checks", "pii_secrets"])), "checks.pii_secrets"),
+    ("yaml_syntax", "version: '0.1\njev_threshold: [0.6\n", "YAML syntax error"),
     ("empty_file", "", "empty"),
-    # YAML would keep the last one silently and switch the profile.
-    ("duplicate_key", _policy_yaml() + "active_profile: permissive\n", "active_profile"),
+    # YAML would keep the last one silently and change the threshold.
+    ("duplicate_key", _policy_yaml() + "jev_threshold: 0.9\n", "jev_threshold"),
 ]
 
 
@@ -147,11 +157,11 @@ async def test_initial_load(policy_path: Path, audit: MemoryAuditSink) -> None:
     loaded = await store.load_initial()
 
     assert store.current() is loaded
-    assert loaded.policy.active_profile == "balanced"
+    assert loaded.policy.jev_threshold == 0.6
     assert loaded.path == policy_path
     assert loaded.yaml == policy_path.read_text()
     prefix, digest = loaded.version.split("+")
-    assert prefix == "0.1" and len(digest) == 8
+    assert prefix == "0.2" and len(digest) == 8
     assert loaded.loaded_at.utcoffset().total_seconds() == 0
     assert len(audit.records) == 1
     rec = _last(audit)
@@ -161,31 +171,16 @@ async def test_initial_load(policy_path: Path, audit: MemoryAuditSink) -> None:
         loaded.version,
     )
     assert loaded.version in rec.reason
-    assert "7 checks on under profile balanced" in rec.reason
+    assert "7 checks on, jev_threshold 0.6" in rec.reason
     assert "off:" not in rec.reason
 
 
-def _all_modes_off(raw: dict[str, Any]) -> None:
-    for section in raw["checks"].values():
-        for cp in ("input", "tool_call", "tool_result", "output"):
-            if cp in section:
-                section[cp] = "off"
-
-
-def _without_modes(*check_ids: str) -> Callable[[dict[str, Any]], None]:
-    """The sections stay, with their parameters, but name no checkpoint: off everywhere."""
-
+def _without(*check_ids: str) -> Callable[[dict[str, Any]], None]:
     def mutate(raw: dict[str, Any]) -> None:
         for cid in check_ids:
-            for cp in ("input", "tool_call", "tool_result", "output"):
-                raw["checks"][cid].pop(cp, None)
+            del raw["checks"][cid]
 
     return mutate
-
-
-def _empty_checks_permissive(raw: dict[str, Any]) -> None:
-    raw["checks"] = {}
-    raw["active_profile"] = "permissive"
 
 
 # An accepted policy that turns protection off must say so in its audit row.
@@ -193,27 +188,16 @@ def _empty_checks_permissive(raw: dict[str, Any]) -> None:
     ("mutate", "expected"),
     [
         (
-            _all_modes_off,
-            "0 checks on under profile balanced; "
-            "off: permissions, budget, loop_detection, signatures, tool_args, pii_secrets, jev",
-        ),
-        (
             _set(["checks"], {}),
-            "0 checks on under profile balanced; "
+            "0 checks on, jev_threshold 0.6; 6 roles, 12 permissions; "
             "off: permissions, budget, loop_detection, signatures, tool_args, pii_secrets, jev",
         ),
         (
-            _without_modes("signatures", "jev"),
-            "5 checks on under profile balanced; off: signatures, jev",
-        ),
-        # Counted under the active profile: permissive's overrides turn two checks back on.
-        (
-            _empty_checks_permissive,
-            "2 checks on under profile permissive; "
-            "off: permissions, budget, loop_detection, signatures, tool_args",
+            _without("signatures", "jev"),
+            "5 checks on, jev_threshold 0.6; 6 roles, 12 permissions; off: signatures, jev",
         ),
     ],
-    ids=["all_modes_off", "empty_checks", "two_off", "profile_overrides"],
+    ids=["empty_checks", "two_off"],
 )
 async def test_loaded_audit_row_names_checks_that_are_off(
     store: PolicyStore,
@@ -255,7 +239,7 @@ async def test_valid_edit_picked_up_by_poll(
 
     assert await store.poll_once() is True
     new = store.current()
-    assert new.policy.active_profile == "strict"
+    assert new.policy.jev_threshold == 0.4
     assert new.version != old.version
     rec = _last(audit)
     assert (rec.check, rec.action, rec.policy_version) == (
@@ -320,7 +304,7 @@ async def test_fix_after_broken_edit_recovers(
 
     _write(policy_path, VALID_STRICT)
     assert await store.poll_once() is True
-    assert store.current().policy.active_profile == "strict"
+    assert store.current().policy.jev_threshold == 0.4
     assert _last(audit).check == "policy_loaded"
 
     # The same mistake made again later is a new event and is audited again.
@@ -350,7 +334,7 @@ async def test_half_written_or_missing_file_keeps_old_policy(
 
     _write(policy_path, VALID_STRICT)
     assert await store.poll_once() is True
-    assert store.current().policy.active_profile == "strict"
+    assert store.current().policy.jev_threshold == 0.4
 
 
 async def test_replace_writes_file_and_swaps(
@@ -360,7 +344,7 @@ async def test_replace_writes_file_and_swaps(
 
     assert policy_path.read_bytes() == VALID_STRICT.encode("utf-8")
     assert store.current() is loaded
-    assert loaded.policy.active_profile == "strict"
+    assert loaded.policy.jev_threshold == 0.4
     rec = _last(audit)
     assert (rec.check, rec.policy_version) == ("policy_loaded", loaded.version)
     # The poll loop must not reload and re-audit our own write.
@@ -412,16 +396,16 @@ async def test_version_tracks_content(store: PolicyStore) -> None:
 
     assert strict != initial
     assert back == initial
-    assert strict.startswith("0.1+") and initial.startswith("0.1+")
+    assert strict.startswith("0.2+") and initial.startswith("0.2+")
 
 
 async def test_snapshot_survives_swap(store: PolicyStore) -> None:
     snapshot = store.current()
     await store.save(VALID_STRICT)
 
-    assert snapshot.policy.active_profile == "balanced"
+    assert snapshot.policy.jev_threshold == 0.6
     assert snapshot.version != store.current().version
-    assert store.current().policy.active_profile == "strict"
+    assert store.current().policy.jev_threshold == 0.4
 
 
 async def test_poll_loop_applies_edit_within_two_seconds(
@@ -432,9 +416,9 @@ async def test_poll_loop_applies_edit_within_two_seconds(
         _write(policy_path, VALID_STRICT)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 2.0
-        while store.current().policy.active_profile != "strict" and loop.time() < deadline:
+        while store.current().policy.jev_threshold != 0.4 and loop.time() < deadline:
             await asyncio.sleep(0.05)
-        assert store.current().policy.active_profile == "strict"
+        assert store.current().policy.jev_threshold == 0.4
     finally:
         await store.stop()
 
@@ -468,10 +452,10 @@ async def test_poll_loop_survives_exceptions(
 
         _write(policy_path, VALID_STRICT)
         for _ in range(100):
-            if store.current().policy.active_profile == "strict":
+            if store.current().policy.jev_threshold == 0.4:
                 break
             await asyncio.sleep(0.02)
-        assert store.current().policy.active_profile == "strict"
+        assert store.current().policy.jev_threshold == 0.4
     finally:
         await store.stop()
     assert any("policy poll" in r.message and r.levelno == logging.ERROR for r in caplog.records)

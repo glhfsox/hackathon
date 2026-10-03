@@ -91,7 +91,6 @@ async def _step(policy, client, checkpoint, messages, reply=None):
         request,
         policy,
         policy.version,
-        policy.callers["demo"],
         judge=client,
         audit=MemoryAuditSink(),
         checks=[JEV_CHECK],

@@ -7,15 +7,16 @@ Definitions the numbers rely on:
   one). It never counts in per-check or per-request stats, only under `system_events`.
 - A request is a distinct non-null request_id with at least one check row. Its outcome is the
   strongest action among its check rows (block > redact > flag > allow). A request that only
-  produced system events (e.g. auth failure) shows up under `system_events`, so
+  produced system events (e.g. a malformed body) shows up under `system_events`, so
   `requests == allowed + redacted + blocked + flagged` always holds.
 - Upstream usage is on a request's `turn_summary` row (older logs: on one or several of its reply
   check rows), so tokens and cost are taken once per request, from its row with the most tokens.
   The same usage on a check row and on the turn_summary row therefore never counts twice.
 - Percentiles use the nearest-rank method: the value at rank ceil(p/100 * n) of the sorted
   values. No interpolation, so p50 of two values is the lower one. Empty input gives 0.0.
-- `since` narrows every figure except `budget_by_caller` and `economics.budget_utilization`,
-  which always cover the UTC day of `now` because they are compared against per-day limits.
+- `since` narrows every figure except `budget_by_caller`, which always covers the UTC day of
+  `now`: it is today's usage per user. Limits are per role and the audit rows carry no roles,
+  so they are reported as 0 (unknown here).
 
 `agents` and `economics` come from `turn_summary` rows only (one per checkpoint, written by the
 pipeline). A turn is one request, i.e. one agent step: its turn_summary rows grouped by
@@ -34,13 +35,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy
-from app.models.policy import Policy
+from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy, Mode
+from app.models.policy import CHECK_SPECS, Policy
 
 # AuditRecord.check values that are system events, not check results (contracts/models.md).
 SYSTEM_EVENTS = frozenset(
     {
-        "auth_failed",
         "bad_request",
         "upstream_unavailable",
         "policy_loaded",
@@ -113,11 +113,6 @@ def _ratio(part: float, whole: float) -> float:
     return part / whole if whole else 0.0
 
 
-def _pct(used: float, limit: float | None) -> float | None:
-    # None (no limit) or 0 (nothing allowed) has no meaningful utilisation.
-    return 100.0 * used / limit if limit else None
-
-
 @dataclass
 class _Turn:
     """One request (agent step), from its turn_summary rows."""
@@ -182,6 +177,17 @@ def _agents(turns: list[_Turn]) -> dict[str, dict[str, Any]]:
     return agents
 
 
+def _enabled_at(policy: Policy, check_id: str) -> dict[str, str]:
+    """What the check does at each checkpoint, in the shape the dashboard's check matrix reads:
+    `redact` or `block` where an enabled check runs, `off` everywhere else."""
+    spec = CHECK_SPECS.get(check_id)
+    on = Mode.REDACT if check_id == "pii_secrets" else Mode.BLOCK
+    return {
+        cp.value: (on if spec and policy.enabled(check_id) and cp in spec.checkpoints else Mode.OFF)
+        for cp in Checkpoint
+    }
+
+
 def _economics(
     summary_rows: list[_Row],
     turns: list[_Turn],
@@ -224,13 +230,6 @@ def _economics(
             "avg": _ratio(sum(per_session), len(per_session)),
         },
         "cost_per_turn_avg": _ratio(sum(t.cost for t in turns), len(turns)),
-        "budget_utilization": {
-            cid: {
-                "tokens_pct": _pct(tokens_today[cid], caller.budgets.tokens_per_day),
-                "cost_pct": _pct(cost_today[cid], caller.budgets.cost_per_day),
-            }
-            for cid, caller in policy.callers.items()
-        },
         "blocked_before_upstream": blocked_before_upstream,
         "price_per_1k_tokens": {
             m: cfg.price_per_1k_tokens for m, cfg in sorted(policy.models.items())
@@ -306,7 +305,7 @@ def compute_metrics(
             cost_today[record.caller_id] += record.cost
 
     top_reasons = sorted(block_reasons.items(), key=lambda kv: (-kv[1], kv[0]))
-    check_ids = list(dict.fromkeys([*policy.checks, *policy.profile.checks]))
+    check_ids = list(dict.fromkeys([*policy.checks, *CHECK_SPECS]))
 
     # Agent and economic facts: the turn_summary rows, grouped into turns by request.
     summary_rows = [row for row in rows if row[0].check == TURN_SUMMARY]
@@ -315,9 +314,8 @@ def compute_metrics(
         if record.request_id is not None:
             by_turn[record.request_id].append(record)
     turns = [_turn(records) for records in by_turn.values()]
-
     return {
-        "active_profile": policy.active_profile,
+        "jev_threshold": policy.jev_threshold,
         "totals": totals,
         "blocks_by_check": _sorted_counts(blocks_by_check),
         "latency_ms_by_check": {c: _p50_p95(v) for c, v in sorted(latencies.items())},
@@ -325,16 +323,14 @@ def compute_metrics(
         "budget_by_caller": {
             cid: {
                 "tokens_today": tokens_today[cid],
-                "tokens_limit": caller.budgets.tokens_per_day or 0,
+                "tokens_limit": 0,
                 "cost_today": cost_today[cid],
-                "cost_limit": float(caller.budgets.cost_per_day or 0.0),
+                "cost_limit": 0.0,
             }
-            for cid, caller in policy.callers.items()
+            for cid in sorted(tokens_today.keys() | cost_today.keys())
         },
         # Additive fields beyond the contract shape.
-        "enabled_checks": {
-            cid: {cp.value: policy.mode(cid, cp).value for cp in Checkpoint} for cid in check_ids
-        },
+        "enabled_checks": {cid: _enabled_at(policy, cid) for cid in check_ids},
         "blocks_by_checkpoint": _sorted_counts(blocks_by_checkpoint),
         "blocks_by_caller": _sorted_counts(blocks_by_caller),
         "actions_by_check": dict(sorted(actions_by_check.items())),

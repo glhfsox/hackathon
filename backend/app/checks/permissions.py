@@ -1,14 +1,19 @@
-"""Permissions: the caller may use this model and these tools (docs/architecture.md §4, #1).
+"""Permissions: the request may use this model and these tools (docs/architecture.md §4, #1).
+
+The models come from the check's own policy parameter `allowed_models` (left out: none). The
+tools are those the user's roles allow (`roles` / `permissions` in the policy, resolved from the
+token by the proxy, which has already taken disallowed tools out of the request and replaced a
+disallowed call by a notice): this check is the last line of defence.
 
 The model is checked at `input` and `tool_result`: both are requests the proxy forwards upstream
 to `request.model`, and a trailing tool message must not skip the allow-list. Tools are checked at
 `tool_call`, against the calls in the upstream reply.
 
 Tool calls already in the conversation's assistant messages are deliberately not re-checked at
-`input` / `tool_result`. Each was judged at its own `tool_call` checkpoint, and execution is gated
-by the tool guard (/v1/tools/check), not by history. Rejecting history would not stop a forged
-call either: the agent can paste the same output into a user message, whose text the content
-checks see anyway. It would only lock out a session after a policy edit narrows `allowed_tools`.
+`input` / `tool_result`. Each was judged at its own `tool_call` checkpoint. Rejecting history
+would not stop a forged call either: the agent can paste the same output into a user message,
+whose text the content checks see anyway. It would only lock out a session after a policy edit
+narrows `allowed_tools`.
 """
 
 from __future__ import annotations
@@ -31,10 +36,10 @@ class PermissionsCheck:
         started = time.perf_counter()
         role = ctx.caller_role
         if request.checkpoint in (Checkpoint.INPUT, Checkpoint.TOOL_RESULT):
-            if request.model not in ctx.allowed_models:
-                reason = f"model {safe_label(request.model)!r} is not allowed for role {role!r}"
+            if request.model not in settings.get("allowed_models", []):
+                reason = f"model {safe_label(request.model)!r} is not allowed"
                 return make_result(self.id, request, "block", reason, started)
-            reason = f"model {safe_label(request.model)!r} is allowed for role {role!r}"
+            reason = f"model {safe_label(request.model)!r} is allowed"
             return make_result(self.id, request, "allow", reason, started)
 
         if request.checkpoint == Checkpoint.TOOL_CALL:

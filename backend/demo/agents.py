@@ -1,11 +1,10 @@
-"""The two demo agents. Each has its own API key, so the policy gives each its own caller,
-permissions and budgets.
+"""The two demo agents. Both share the policy's global permissions and budgets.
 
-- worker (caller `demo`, role developer): query_customers, run_shell, read_file, http_get.
-- orchestrator (caller `orchestrator`, role orchestrator): one tool, `delegate(task)`, which runs
-  the worker and returns its final answer. Agent-to-agent traffic is therefore an ordinary tool
-  call: the task passes the orchestrator's tool_call checkpoint (and the tool guard), and the
-  worker's answer passes its tool_result checkpoint. No separate protocol.
+- worker: query_customers, run_shell, read_file, http_get.
+- orchestrator: one tool, `delegate(task)`, which runs the worker and returns its final answer.
+  Agent-to-agent traffic is therefore an ordinary tool call: the task passes the orchestrator's
+  tool_call checkpoint, and the worker's answer passes its tool_result checkpoint. No separate
+  protocol.
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ def run_orchestrator(
     max_steps: int = 4,
     on_event: Callable[[AgentEvent], None] | None = None,
 ) -> AgentResult:
-    """`client` carries the orchestrator's API key, `worker_client` the worker's."""
+    """`client` makes the orchestrator's chat calls, `worker_client` the worker's."""
 
     def delegate(task: str) -> str:
         return run_worker(worker_client, task, model=model, on_event=on_event).answer

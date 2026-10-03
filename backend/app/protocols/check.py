@@ -1,7 +1,8 @@
 """The one interface every check implements (constitution III). One check, one module.
 
-A check reports its raw opinion in `verdict`; the pipeline maps it to the final `action` from the
-policy mode. A check reads only its own settings and never imports another check.
+A check reports its raw opinion in `verdict`; the pipeline maps it to the final `action` (a finding
+blocks, a redaction is applied, an error blocks). A check reads only its own settings and never
+imports another check.
 """
 
 from __future__ import annotations
@@ -30,12 +31,10 @@ class CheckContext:
     Checks never import other checks or the policy store; the pipeline fills this in.
     """
 
+    # The user, from the verified token: shown in reasons, and what permissions and budget use.
     caller_role: str = ""
-    allowed_models: list[str] = field(default_factory=list)
+    roles: list[str] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
-    requests_per_minute: int | None = None
-    tokens_per_day: int | None = None
-    cost_per_day: float | None = None
     ledger: UsageLedger | None = None
     # None means the feed never loaded: the signatures check must report an error, not allow.
     signatures: list[Signature] | None = None

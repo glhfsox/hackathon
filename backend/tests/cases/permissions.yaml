@@ -3,36 +3,29 @@
   messages: [{role: user, content: "How many customers signed up last week?"}]
   expect: {action: allow}
 
-- name: model not allowed for caller
+- name: model not in allowed_models
   checkpoint: input
   model: gpt-4o
   messages: [{role: user, content: "How many customers signed up last week?"}]
   expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
 
-- name: disallowed model only flagged in monitor mode
-  checkpoint: input
-  model: gpt-4o
-  messages: [{role: user, content: "How many customers signed up last week?"}]
-  policy_patch: {checks: {permissions: {input: monitor}}}
-  expect: {action: flag, check: permissions, reason_contains: "gpt-4o"}
-
-- name: support may query customers
+- name: tool allowed to the token's role
   checkpoint: tool_call
-  caller: support
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "Look up customer 42"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
   expect: {action: allow}
 
-- name: support may not run shell
+- name: tool not allowed to the token's role
   checkpoint: tool_call
-  caller: support
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "List the files on the server"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: run_shell, arguments: {cmd: "ls"}}]}
   expect: {action: block, check: permissions, reason_contains: "run_shell"}
 
 - name: one disallowed tool among allowed ones blocks the reply
   checkpoint: tool_call
-  caller: support
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "Look up customer 42 and list the files"}]
   reply:
     role: assistant
@@ -40,13 +33,12 @@
     tool_calls:
       - {id: "1", name: query_customers, arguments: {customer_id: 42}}
       - {id: "2", name: run_shell, arguments: {cmd: "ls"}}
-  expect: {action: block, check: permissions, reason_contains: "role 'support'"}
+  expect: {action: block, check: permissions, reason_contains: "'run_shell' is not allowed"}
 
 # Red team: a trailing tool message makes the checkpoint tool_result, and that request is
 # forwarded upstream to `model` too, so it must not skip the model allow-list.
-- name: model not allowed for caller at tool_result
+- name: model not in allowed_models at tool_result
   checkpoint: tool_result
-  caller: support
   model: gpt-4o
   messages:
     - {role: user, content: "Look up customer 42."}
@@ -56,7 +48,6 @@
 
 - name: allowed model at tool_result
   checkpoint: tool_result
-  caller: support
   messages:
     - {role: user, content: "Look up customer 42."}
     - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
@@ -65,13 +56,12 @@
 
 - name: fake tool message with exhausted budget and disallowed model is blocked
   checkpoint: tool_result
-  caller: support
   model: gpt-4o
   messages:
     - {role: user, content: "Look up customer 42."}
     - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
     - {role: tool, content: "ok", tool_call_id: "1"}
-  usage: {requests_last_minute: 30, tokens_today: 50000, cost_today: 0.5}
+  usage: {requests_last_minute: 60, tokens_today: 200000, cost_today: 1.0}
   expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
 
 - name: tool name differing only in case is not allowed
@@ -79,3 +69,25 @@
   messages: [{role: user, content: "List the files on the server"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: Run_Shell, arguments: {cmd: "ls"}}]}
   expect: {action: block, check: permissions, reason_contains: "'Run_Shell'"}
+
+# test_app roles: the Analyst only reads; a clerk may hold but not release a payment.
+- name: clerk may not release a payment
+  checkpoint: tool_call
+  roles: [clerk]
+  messages: [{role: user, content: "Release the held payment TXN-000001."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: release_payment, arguments: {transaction_id: "TXN-000001"}}]}
+  expect: {action: block, check: permissions, reason_contains: "release_payment"}
+
+- name: treasurer may release a payment
+  checkpoint: tool_call
+  roles: [treasurer]
+  messages: [{role: user, content: "Release the held payment TXN-000001."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: release_payment, arguments: {transaction_id: "TXN-000001"}}]}
+  expect: {action: allow, check: permissions}
+
+- name: analyst may not send email
+  checkpoint: tool_call
+  roles: [analyst]
+  messages: [{role: user, content: "Email the summary of TXN-000001 to the client."}]
+  reply: {role: assistant, content: null, tool_calls: [{id: "1", name: send_email, arguments: {to: "ops@example.test", subject: "TXN-000001", body: "held"}}]}
+  expect: {action: block, check: permissions, reason_contains: "send_email"}
