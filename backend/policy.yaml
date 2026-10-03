@@ -37,8 +37,15 @@ jev_threshold: 0.6
 #   price_per_1k_tokens  used for cost estimates and cost budgets (local models cost 0)
 #   timeout_s            seconds to wait for the upstream reply (default 120); after it the
 #                        agent gets a refusal `upstream_unavailable`
+#   api_key_env          NAME of the env var holding the upstream's API key (hosted models only);
+#                        when it is empty the agent gets a refusal `upstream_unavailable`
 models:
-  gemma4:
+  gpt-4o-mini:                       # the demo model
+    upstream_base_url: "https://api.openai.com/v1"
+    api_key_env: OPENAI_API_KEY
+    price_per_1k_tokens: 0.0006      # OpenAI's output price; input is cheaper, so costs run high
+    timeout_s: 60
+  gemma4:                            # local Ollama, for offline testing
     upstream_base_url: "http://localhost:11434/v1"
     price_per_1k_tokens: 0.0
     timeout_s: 120
@@ -83,7 +90,7 @@ checks:
   # above); anything else is blocked.
   #   allowed_models  must name models listed under `models`
   permissions:
-    allowed_models: [gemma4]
+    allowed_models: [gpt-4o-mini, gemma4]
 
   # Usage limits per role, counted per user (the token's `sub`) on every request to the model:
   # input and tool_result. A user gets the most generous limits of their roles; a user none of
@@ -146,18 +153,19 @@ signatures:
   source: signatures.yaml
   refresh_s: 5
 
-# Jev, the remote AI decision maker, and its local fallback.
+# Jev, the remote AI decision maker, and its fallback.
 #   model      must be a pinned version; "jev-latest" is rejected
 #   api_key_env NAME of the env var holding the Jev API key
 #   timeout_s  after this, the fallback model is asked instead
-#   fallback   local OpenAI-compatible model (Ollama). If Jev and the fallback both fail, the
-#              request fails closed (blocked).
+#   fallback   any OpenAI-compatible model (OpenAI here; Ollama works without api_key_env). If
+#              Jev and the fallback both fail, the request fails closed (blocked).
 jev:
   model: jev-1.13.0
   api_key_env: TYPESAFE_API_KEY
   base_url: "https://api.typesafe.ai"
   timeout_s: 3
   fallback:
-    model: gemma4
-    base_url: "http://localhost:11434/v1"
-    timeout_s: 30
+    model: gpt-4o-mini
+    base_url: "https://api.openai.com/v1"
+    api_key_env: OPENAI_API_KEY
+    timeout_s: 15

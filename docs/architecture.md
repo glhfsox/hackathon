@@ -11,7 +11,7 @@ Status: **draft v0.1**. The team confirms or changes it through small PRs. Undec
  agent ──────► /v1/chat/completions ─► OpenAI adapter ─► canonical request ─► pipeline ───┼──► upstream LLM
  (base_url)  │                                                              (checks)     │    (per model, from policy)
              │ /api/* ◄── dashboard: policy, audit, metrics                              │
-             │        policy.yaml (hot reload) · audit.db (append-only) · Jev client     │──► Jev (remote) ─► fallback: local Ollama
+             │        policy.yaml (hot reload) · audit.db (append-only) · Jev client     │──► Jev (remote) ─► fallback: OpenAI   
              └───────────────────────────────────────────────────────────────────────────┘
  frontend (React) ──► /api/*
 ```
@@ -22,7 +22,7 @@ Status: **draft v0.1**. The team confirms or changes it through small PRs. Undec
 | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Backend           | Python 3.12, FastAPI, Pydantic v2, httpx (upstream + Jev calls), PyYAML, PyJWT (tokens)                                         |
 | Upstream LLMs     | Any OpenAI-compatible endpoint, set per model in the policy. Default local Ollama at `http://localhost:11434/v1` |
-| AI decision maker | Jev (remote LLM), with a local Ollama model as fallback                                                          |
+| AI decision maker | Jev (remote LLM), with an OpenAI-compatible fallback model (OpenAI in the shipped policy, Ollama for tests)  |
 | Frontend          | React + Vite + TypeScript, plain fetch through one API client module                                             |
 | Tests             | pytest with data-driven YAML cases                                                                               |
 | Ports             | backend `8000`, frontend `5173`, Ollama `11434`                                                                  |
@@ -83,7 +83,7 @@ At `tool_call` the content checks (`signatures`, `pii_secrets`, `jev`) read one 
 - A single module, `core/jev.py`, is the only code that talks to an AI decision maker.
 - Order of attempts:
   1. Jev, using the policy `jev.timeout_s`.
-  2. On a timeout, error or unparseable answer, the policy `jev.fallback` model (local Ollama, OpenAI-compatible, JSON-mode prompt).
+  2. On a timeout, error or unparseable answer, the policy `jev.fallback` model (any OpenAI-compatible endpoint, OpenAI in the shipped policy with its key from `api_key_env`; JSON-mode prompt).
   3. If both fail, the result is `error`, which blocks (fail closed).
 - Input and output shapes: `JudgeInput` and `JudgeVerdict` in [contracts/models.md](../contracts/models.md). `decided_by` records which model answered.
 - **OPEN:** Jev endpoint, auth, wire format and cost. Until these are known, the Jev adapter is a stub behind the same interface, and the fallback carries the demo.

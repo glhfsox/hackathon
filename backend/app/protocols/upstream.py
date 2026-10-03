@@ -13,11 +13,18 @@ class Upstream(Protocol):
     """
 
     async def chat(
-        self, payload: dict[str, Any], *, base_url: str, timeout_s: float
+        self,
+        payload: dict[str, Any],
+        *,
+        base_url: str,
+        timeout_s: float,
+        api_key_env: str | None = None,
     ) -> dict[str, Any]:
         """POST the payload to `<base_url>/chat/completions`.
 
-        The caller passes the model's `upstream_base_url` and `timeout_s` from the policy
-        snapshot its request took, so the upstream never looks the policy up a second time.
+        The caller passes the model's `upstream_base_url`, `timeout_s` and `api_key_env` from the
+        policy snapshot its request took, so the upstream never looks the policy up a second time.
+        With `api_key_env`, the key in that env var is sent as a Bearer token; an empty one is an
+        UpstreamError.
         """
         ...

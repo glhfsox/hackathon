@@ -183,6 +183,16 @@ def _extract_json(content: str) -> str:
     return content[start : end + 1]
 
 
+def _fallback_headers(fb: JevFallback) -> dict[str, str]:
+    """The fallback's Bearer header when the policy names a key env var. An empty one is a
+    ValueError, so the judge fails closed; the message names the variable, never the key."""
+    if fb.api_key_env is None:
+        return {}
+    if not (key := os.environ.get(fb.api_key_env)):
+        raise ValueError(f"env {fb.api_key_env} is empty")
+    return {"Authorization": f"Bearer {key}"}
+
+
 class JevClient:
     """Implements the Judge protocol (app/checks/base.py) for Jev with the local fallback.
 
@@ -350,7 +360,9 @@ class JevClient:
             ],
         }
         url = f"{fb.base_url.rstrip('/')}/chat/completions"
-        resp = await self._http.post(url, json=body, timeout=fb.timeout_s)
+        resp = await self._http.post(
+            url, json=body, headers=_fallback_headers(fb), timeout=fb.timeout_s
+        )
         resp.raise_for_status()
         content = _ChatResponse.model_validate(resp.json()).choices[0].message.content
         if not content:
@@ -385,10 +397,14 @@ class JevClient:
         jev_up = bool(os.environ.get(cfg.api_key_env)) and not self._jev_failed
         fb = cfg.fallback
         try:
-            resp = await self._http.get(f"{fb.base_url.rstrip('/')}/models", timeout=fb.timeout_s)
+            resp = await self._http.get(
+                f"{fb.base_url.rstrip('/')}/models",
+                headers=_fallback_headers(fb),
+                timeout=fb.timeout_s,
+            )
             resp.raise_for_status()
             fallback_up = True
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             log.warning("fallback health probe failed (%s): %s", fb.base_url, _describe(exc))
             fallback_up = False
         return {"jev": "up" if jev_up else "down", "fallback": "up" if fallback_up else "down"}

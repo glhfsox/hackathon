@@ -6,16 +6,18 @@ Design: [docs/architecture.md](docs/architecture.md). API: [contracts/](contract
 
 ## Quick start for judges
 
-You need Docker and [Ollama](https://ollama.com) on the host, with a model that supports tool calls.
+You need Docker and an OpenAI API key: the agents' model (`gpt-4o-mini`) and Jev's fallback run at OpenAI.
 
 ```sh
-ollama pull gemma4                      # once
+cp .env.example .env                    # once; put OPENAI_API_KEY (and TYPESAFE_API_KEY) there
 docker compose up -d --build            # control layer on :8000, dashboard on :5173
 ```
 
+Never put keys in `.env.example`: it is committed. `.env` is gitignored.
+
 `JWT_SECRET` defaults to a public demo value. To use your own, run `docker compose run --rm init` once (it writes a random one to `.env`), then `docker compose up -d --build`.
 
-On Linux, start Ollama with `OLLAMA_HOST=0.0.0.0` so containers can reach it. Check the layer: `curl http://localhost:8000/api/health`.
+Check the layer: `curl http://localhost:8000/api/health`. Ollama is optional: with `ollama pull gemma4` on the host, pass `--model gemma4` (or `TEST_APP_MODEL=gemma4`) to use the local model; on Linux start it with `OLLAMA_HOST=0.0.0.0` so containers can reach it.
 
 Open the dashboard at <http://localhost:5173>. It shows the security posture, blocked threats, budgets and the audit log. It also has a policy editor and a chat playground.
 

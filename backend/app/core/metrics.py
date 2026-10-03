@@ -126,6 +126,8 @@ class _Turn:
     cost: float
     upstream_ms: float | None
     overhead_ms: float
+    pre_ms: float  # checks before the model: input or tool_result
+    post_ms: float | None  # checks on the reply: tool_call or output; None when never reached
 
 
 def _turn(records: list[AuditRecord]) -> _Turn:
@@ -142,7 +144,27 @@ def _turn(records: list[AuditRecord]) -> _Turn:
         cost=sum(r.cost for r in records),
         upstream_ms=sum(upstream) if upstream else None,
         overhead_ms=sum(r.overhead_ms or 0.0 for r in records),
+        pre_ms=sum(r.overhead_ms or 0.0 for r in records if r.checkpoint in _REQUEST_CHECKPOINTS),
+        post_ms=sum(reply) if (reply := _reply_overheads(records)) else None,
     )
+
+
+def _reply_overheads(records: list[AuditRecord]) -> list[float]:
+    return [r.overhead_ms or 0.0 for r in records if r.checkpoint not in _REQUEST_CHECKPOINTS]
+
+
+def _request_latency(turns: list[_Turn]) -> dict[str, dict[str, float]]:
+    """Where an agent step's time goes. `total` is what the agent waited: a turn blocked before
+    the model counts only its pre-checks. Replies are not streamed, so the first token reaches
+    the agent with the whole answer and `ttft` equals `total`."""
+    total = _p50_p95([t.pre_ms + (t.upstream_ms or 0.0) + (t.post_ms or 0.0) for t in turns])
+    return {
+        "pre_checks": _p50_p95([t.pre_ms for t in turns]),
+        "upstream": _p50_p95([t.upstream_ms for t in turns if t.upstream_ms is not None]),
+        "post_checks": _p50_p95([t.post_ms for t in turns if t.post_ms is not None]),
+        "total": total,
+        "ttft": dict(total),
+    }
 
 
 def _agents(turns: list[_Turn]) -> dict[str, dict[str, Any]]:
@@ -350,5 +372,6 @@ def compute_metrics(
         "cost_total": float(sum(r.cost for r, _ in window_usage)),
         "policy_versions": _sorted_counts(Counter(r.policy_version for r, _ in rows)),
         "agents": _agents(turns),
+        "request_latency_ms": _request_latency(turns),
         "economics": _economics(summary_rows, turns, policy, tokens_today, cost_today),
     }

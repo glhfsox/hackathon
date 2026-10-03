@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getHealth } from './api/client'
 import { usePolled } from './hooks'
 import AuditLog from './pages/AuditLog'
+import Live from './pages/Live'
 import Overview from './pages/Overview'
 import PolicyEditor from './pages/PolicyEditor'
 import Playground from './pages/Playground'
@@ -10,6 +11,7 @@ import TimeFilter from './components/TimeFilter'
 
 const PAGES = [
   { id: 'overview', tab: 'Overview' },
+  { id: 'live', tab: 'Live' },
   { id: 'audit', tab: 'Audit' },
   { id: 'policy', tab: 'Policy' },
   { id: 'playground', tab: 'Playground' },
@@ -49,6 +51,7 @@ export default function App() {
 
       <main className="main">
         {page === 'overview' && <Overview range={range} />}
+        {page === 'live' && <Live />}
         {page === 'audit' && <AuditLog range={range} />}
         {page === 'policy' && <PolicyEditor onSaved={health.reload} />}
         {page === 'playground' && <Playground />}

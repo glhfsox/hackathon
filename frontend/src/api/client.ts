@@ -2,6 +2,7 @@
 import type {
   AuditFilters,
   AuditPage,
+  AuditRecord,
   ChatCompletion,
   ChatMessage,
   Health,
@@ -95,3 +96,16 @@ export const chat = (messages: ChatMessage[]) =>
     headers: { Authorization: `Bearer ${PLAYGROUND_KEY}` },
     body: JSON.stringify({ model: PLAYGROUND_MODEL, messages }),
   })
+
+/** Audit rows as the backend writes them (server-sent events). Returns a function that closes
+ * the stream. The browser reconnects by itself and resumes after the last row it got. */
+export function subscribeEvents(
+  onRecord: (record: AuditRecord) => void,
+  onOpen: (open: boolean) => void,
+): () => void {
+  const source = new EventSource(`${API_URL}/api/events`)
+  source.onopen = () => onOpen(true)
+  source.onerror = () => onOpen(false)
+  source.onmessage = (e: MessageEvent<string>) => onRecord(JSON.parse(e.data) as AuditRecord)
+  return () => source.close()
+}

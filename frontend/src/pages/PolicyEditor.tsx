@@ -4,9 +4,14 @@ import { CHECKPOINTS, type AuditRecord, type Mode, type PolicyError } from '../a
 import { Pane, Status } from '../components/ui'
 import { fmtTime, usePolled } from '../hooks'
 
-const PROFILES = ['strict', 'balanced', 'permissive']
+// Jev blocks at or above the threshold, so a lower one is stricter.
+const THRESHOLDS = [
+  { value: '0.4', label: 'strict' },
+  { value: '0.6', label: 'balanced' },
+  { value: '0.8', label: 'permissive' },
+]
 const MODE_LETTER: Record<Mode, string> = { off: '-', monitor: 'F', redact: 'R', block: 'B' }
-const ACTIVE_PROFILE = /^active_profile:\s*(\S+)/m
+const JEV_THRESHOLD = /^jev_threshold:\s*(\S+)/m
 
 function MatrixCell({ mode }: { mode: Mode | undefined }) {
   const m = mode ?? 'off'
@@ -43,7 +48,7 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
   const text = draft ?? original
   const modified = draft !== null && draft !== original
   const lines = text.split('\n').length
-  const profile = ACTIVE_PROFILE.exec(text)?.[1]
+  const threshold = JEV_THRESHOLD.exec(text)?.[1]
 
   const reportErrors = (errs: PolicyError[]) => {
     setErrors(errs)
@@ -92,8 +97,8 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
     setMsg(null)
   }
 
-  const setProfile = (p: string) => {
-    if (ACTIVE_PROFILE.test(text)) setDraft(text.replace(ACTIVE_PROFILE, `active_profile: ${p}`))
+  const setThreshold = (t: string) => {
+    if (JEV_THRESHOLD.test(text)) setDraft(text.replace(JEV_THRESHOLD, `jev_threshold: ${t}`))
   }
 
   const onKey = (e: KeyboardEvent) => {
@@ -165,16 +170,19 @@ export default function PolicyEditor({ onSaved }: { onSaved: () => void }) {
               F: monitor · R: redact · B: block · –: off
             </div>
           </Pane>
-          <Pane title="Profile" style={{ flexShrink: 0 }}>
-            {PROFILES.map((p) => (
-              <div key={p}>
-                <button className={`btn ${p === profile ? 'accent' : ''}`} onClick={() => setProfile(p)}>
-                  ({p === profile ? '•' : ' '}) {p}
+          <Pane title="Jev threshold" style={{ flexShrink: 0 }}>
+            {THRESHOLDS.map(({ value, label }) => (
+              <div key={value}>
+                <button
+                  className={`btn ${Number(value) === Number(threshold) ? 'accent' : ''}`}
+                  onClick={() => setThreshold(value)}
+                >
+                  ({Number(value) === Number(threshold) ? '•' : ' '}) {value} {label}
                 </button>
               </div>
             ))}
             <div className="dim" style={{ fontSize: 11 }}>
-              edits the text; write to apply
+              now {threshold ?? '?'}; lower is stricter. Edits the text; write to apply
             </div>
           </Pane>
           <Pane title="Policy history" className="grow">
