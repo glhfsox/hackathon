@@ -39,7 +39,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 - **Backend:** Python, FastAPI, Pydantic v2. `ruff` for lint/format, `pytest` for tests.
 - **Frontend:** React (Vite) + TypeScript, deliberately simple, with no state-management library.
-- **AI decision maker:** Jev (remote). No paid APIs.
+- **AI decision maker:** Jev (remote) if available . Ollama as a fallback. No paid APIs. 
 - **Contract:** the backend and frontend build to `contracts/`. The frontend talks to the backend through a single API client module.
 
 ## 4. Repository layout and context
