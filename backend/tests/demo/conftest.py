@@ -32,16 +32,13 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tools.init_workspace()
 
 
-def bridged_client(gateway: TestClient, api_key: str) -> openai.OpenAI:
+def bridged_client(gateway: TestClient) -> openai.OpenAI:
     def forward(request: httpx2.Request) -> httpx2.Response:
         resp = gateway.request(
             request.method,
             request.url.raw_path.decode(),
             content=request.content,
-            headers={
-                "authorization": request.headers["authorization"],
-                "content-type": "application/json",
-            },
+            headers={"content-type": "application/json"},
         )
         return httpx2.Response(
             resp.status_code,
@@ -51,7 +48,7 @@ def bridged_client(gateway: TestClient, api_key: str) -> openai.OpenAI:
 
     return openai.OpenAI(
         base_url="http://gateway.test/v1",
-        api_key=api_key,
+        api_key="test",  # the client requires one; the control layer does not check it
         max_retries=0,
         http_client=httpx2.Client(transport=httpx2.MockTransport(forward)),
     )

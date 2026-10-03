@@ -1,8 +1,4 @@
-"""Demo tools: plain Python functions, their OpenAI schemas and the tool guard.
-
-The agents never call a tool function directly: `guarded` wraps it so that every call is first
-sent to the control layer (POST /v1/tools/check) and refused unless the answer is `allowed`. An
-agent that ignores a refusal in a proxy reply therefore still cannot run a blocked call.
+"""Demo tools: plain Python functions and their OpenAI schemas.
 
 `run_shell` really executes its command, as the current user. The workspace is its working
 directory, not a sandbox: stopping a dangerous command is the control layer's job.
@@ -22,8 +18,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import openai
-from pydantic import BaseModel, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +120,8 @@ def query_customers(name: str | None = None, customer_id: int | None = None) -> 
 
 
 def _shell_env() -> dict[str, str]:
-    # Not os.environ: the agents' API keys live there and `env` would hand them to the model.
+    # Not os.environ: secrets (Jev and Langfuse keys) live there and `env` would hand them to the
+    # model.
     return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(WORKSPACE)}
 
 
@@ -241,81 +236,3 @@ HTTP_GET = Tool(
         ["url"],
     ),
 )
-
-
-# --- the tool guard ------------------------------------------------------------------------
-
-
-class _GuardAnswer(BaseModel):
-    """POST /v1/tools/check response (contracts/http-api.md); validated, it is a trust boundary."""
-
-    allowed: bool
-    decision: dict[str, Any]
-
-
-def to_contract_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """OpenAI chat messages -> the contract's Message shape (tool arguments as objects)."""
-    out = []
-    for m in messages:
-        calls = [
-            {
-                "id": c["id"],
-                "name": c["function"]["name"],
-                "arguments": json.loads(c["function"].get("arguments") or "{}"),
-            }
-            for c in m.get("tool_calls") or []
-        ]
-        out.append(
-            {
-                "role": m["role"],
-                "content": m.get("content"),
-                "tool_calls": calls,
-                "tool_call_id": m.get("tool_call_id"),
-            }
-        )
-    return out
-
-
-def refusal_text(decision: dict[str, Any]) -> str:
-    results = decision.get("results") or []
-    reason = results[-1]["reason"] if results else "no reason given"
-    return f"Refused by the tool guard: blocked by {decision.get('blocked_by')}: {reason}"
-
-
-GuardedTool = Callable[[str, dict[str, Any], list[dict[str, Any]]], str]
-
-
-def guarded(
-    tool_fn: Callable[..., str],
-    *,
-    client: openai.OpenAI,
-    name: str | None = None,
-    on_decision: Callable[[dict[str, Any]], None] | None = None,
-) -> GuardedTool:
-    """Wrap `tool_fn` so it only runs after the control layer allowed the exact call.
-
-    The returned function takes (tool_call_id, arguments, conversation so far) and returns the
-    text for the model: the tool's output, or a refusal when the guard says not allowed or
-    cannot be asked (fail closed). `client` is the agent's own OpenAI client, so the guard uses
-    the same base URL and API key as the chat calls.
-    """
-    tool_name = name or tool_fn.__name__
-
-    def run(call_id: str, arguments: dict[str, Any], messages: list[dict[str, Any]]) -> str:
-        body = {
-            "tool_call": {"id": call_id, "name": tool_name, "arguments": arguments},
-            "messages": to_contract_messages(messages),
-        }
-        try:
-            raw = client.post("/tools/check", cast_to=object, body=body)
-            answer = _GuardAnswer.model_validate(raw)
-        except (openai.APIError, ValidationError) as exc:
-            log.error("tool guard unavailable for %s (call %s): %s", tool_name, call_id, exc)
-            return f"Refused: the tool guard could not be asked ({type(exc).__name__})"
-        if on_decision is not None:
-            on_decision(answer.decision)
-        if not answer.allowed:
-            return refusal_text(answer.decision)
-        return tool_fn(**arguments)
-
-    return run

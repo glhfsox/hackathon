@@ -1,24 +1,18 @@
-"""The demo tools and the tool guard wrapper."""
+"""The demo tools."""
 
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Any
 
-import httpx2
-import openai
 import pytest
-from fastapi.testclient import TestClient
 
 from app.checks import get_check
 from app.checks.base import CheckContext
 from app.core.pipeline import apply_redactions
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 from demo import tools
-from tests.conftest import DEMO_KEY, FakeUpstream
-from tests.demo.conftest import bridged_client
+from tests.conftest import FakeUpstream
 
 PII_FIELDS = ("email", "phone", "ssn", "pesel", "iban", "card")
 
@@ -37,7 +31,7 @@ async def test_every_fake_pii_value_is_detected_by_pii_secrets() -> None:
     result_text = tools.query_customers()
     request = CanonicalRequest(
         request_id="r1",
-        caller_id="demo",
+        caller_id="anonymous",
         model="gemma4",
         checkpoint=Checkpoint.TOOL_RESULT,
         messages=[
@@ -66,12 +60,15 @@ def test_read_file_stays_inside_the_workspace(workspace: Path) -> None:
     assert tools.read_file("missing.txt").startswith("error:")
 
 
-def test_run_shell_runs_in_the_workspace_without_the_agents_secrets(workspace: Path) -> None:
-    out = tools.run_shell('pwd; ls; echo "key=$DEMO_API_KEY"')
+def test_run_shell_runs_in_the_workspace_without_the_secrets(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-jev-key")
+    out = tools.run_shell('pwd; ls; echo "key=$TYPESAFE_API_KEY"')
 
     assert out.startswith("exit code 0")
     assert str(workspace.resolve()) in out and "notes.txt" in out
-    assert "test-demo-key" not in out and "key=\n" in out
+    assert "test-jev-key" not in out and "key=\n" in out
 
 
 def test_run_shell_times_out(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,56 +85,3 @@ def test_http_get_only_fetches_allowed_hosts(upstream: FakeUpstream) -> None:
     assert tools.http_get("http://evil.example/").startswith("error:")
     assert tools.http_get("file:///etc/passwd").startswith("error:")
     assert page.call_count == 1 and other.call_count == 0
-
-
-@pytest.fixture
-def shell_spy(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """Records every subprocess.run call and still runs it."""
-    calls: list[Any] = []
-    real = subprocess.run
-
-    def spy(*args: Any, **kwargs: Any) -> Any:
-        calls.append(args)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(tools.subprocess, "run", spy)
-    return calls
-
-
-CONVERSATION = [{"role": "user", "content": "Tidy up the workspace."}]
-
-
-def test_guarded_dangerous_command_is_never_executed(
-    gateway: TestClient, workspace: Path, shell_spy: list[Any]
-) -> None:
-    seen: list[dict[str, Any]] = []
-    run = tools.guarded(
-        tools.run_shell, client=bridged_client(gateway, DEMO_KEY), on_decision=seen.append
-    )
-
-    out = run("c1", {"cmd": "rm -rf ./*"}, CONVERSATION)
-
-    assert out.startswith("Refused by the tool guard: blocked by tool_args: ")
-    assert shell_spy == []
-    assert (workspace / "notes.txt").exists()
-    assert seen[0]["action"] == "block" and seen[0]["checkpoint"] == "tool_call"
-
-    # The same wrapper runs a call the guard allows.
-    assert "notes.txt" in run("c2", {"cmd": "ls"}, CONVERSATION)
-    assert len(shell_spy) == 1
-
-
-def test_guard_that_cannot_be_asked_fails_closed(workspace: Path, shell_spy: list[Any]) -> None:
-    down = openai.OpenAI(
-        base_url="http://gateway.test/v1",
-        api_key=DEMO_KEY,
-        max_retries=0,
-        http_client=httpx2.Client(
-            transport=httpx2.MockTransport(lambda r: httpx2.Response(503, json={}))
-        ),
-    )
-
-    out = tools.guarded(tools.run_shell, client=down)("c1", {"cmd": "ls"}, CONVERSATION)
-
-    assert out.startswith("Refused: the tool guard could not be asked")
-    assert shell_spy == []

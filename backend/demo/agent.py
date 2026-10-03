@@ -1,9 +1,8 @@
 """A small tool-calling agent on the bare `openai` client (no framework).
 
-It is protected by the control layer through two settings only, the client's `base_url` and
-`api_key`. The proxy's verdict reaches it as an ordinary chat reply: a refusal ("Blocked by
-<check>: <reason>") is taken as the final answer, and no tool call from a blocked reply runs.
-Every tool runs through the tool guard (demo.tools.guarded) as well.
+It is protected by the control layer through one setting only, the client's `base_url`. The
+proxy's verdict reaches it as an ordinary chat reply: a refusal ("Blocked by <check>: <reason>")
+is taken as the final answer, and no tool call from a blocked reply runs.
 
 The decision trace comes from the response's extra `control` field. The SDK keeps unknown
 response fields, so it is `completion.model_extra["control"]` (openai 3.24.0).
@@ -19,7 +18,7 @@ from typing import Any, Literal
 
 import openai
 
-from demo.tools import Tool, guarded
+from demo.tools import Tool
 
 log = logging.getLogger(__name__)
 
@@ -28,13 +27,13 @@ BLOCKED_PREFIX = "Blocked by "
 
 @dataclass(frozen=True)
 class AgentEvent:
-    """Something the agent saw: a proxy or tool-guard decision, or a tool result."""
+    """Something the agent saw: a proxy decision or a tool result."""
 
     agent: str
     step: int
-    kind: Literal["proxy", "guard", "tool"]
-    decision: dict[str, Any] | None = None  # proxy and guard: a contract Decision
-    tool: str | None = None  # guard and tool
+    kind: Literal["proxy", "tool"]
+    decision: dict[str, Any] | None = None  # proxy: a contract Decision
+    tool: str | None = None  # tool
     arguments: dict[str, Any] | None = None  # tool
     result: str | None = None  # tool: the text handed back to the model
 
@@ -48,7 +47,7 @@ class AgentResult:
 
     @property
     def decisions(self) -> list[dict[str, Any]]:
-        """Every control decision seen, proxy and tool guard, in order."""
+        """Every control decision seen, in order."""
         return [e.decision for e in self.events if e.decision is not None]
 
 
@@ -103,7 +102,6 @@ def run_agent(
             messages.append({"role": "assistant", "content": content})
             return AgentResult(content, blocked, messages, events)
 
-        history = list(messages)  # the conversation before this reply, as the proxy saw it
         messages.append(
             {
                 "role": "assistant",
@@ -112,22 +110,20 @@ def run_agent(
             }
         )
         for call in message.tool_calls:
-            result = _run_tool(client, by_name, call, history, name, step, emit)
+            result = _run_tool(by_name, call, name, step, emit)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
     answer = f"stopped after {max_steps} steps without a final answer"
     return AgentResult(answer, False, messages, events)
 
 
 def _run_tool(
-    client: openai.OpenAI,
     by_name: dict[str, Tool],
     call: Any,
-    history: list[dict[str, Any]],
     agent: str,
     step: int,
     emit: Callable[[AgentEvent], None],
 ) -> str:
-    """Run one tool call through the guard. Every failure becomes text for the model."""
+    """Run one tool call. Every failure becomes text for the model."""
     tool_name = call.function.name
     arguments: Any = None
     try:
@@ -137,15 +133,7 @@ def _run_tool(
         arguments = json.loads(call.function.arguments or "{}")
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be a JSON object")
-        run = guarded(
-            tool.fn,
-            client=client,
-            name=tool.name,
-            on_decision=lambda d: emit(
-                AgentEvent(agent, step, "guard", decision=d, tool=tool_name)
-            ),
-        )
-        result = run(call.id, arguments, history)
+        result = tool.fn(**arguments)
     except Exception as exc:
         # The model picked the tool and its arguments (unknown tool, wrong names or types): it
         # gets the error back instead of the agent crashing.
