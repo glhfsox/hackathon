@@ -64,13 +64,14 @@ def test_check_sections_hold_params_only(policy: Policy) -> None:
     tool_args = policy.check_config("tool_args")
     assert set(tool_args.params) == {"allowed_root", "categories", "max_command_chars"}
     permissions = policy.check_config("permissions")
-    assert set(permissions.params) == {"allowed_models", "allowed_tools"}
-    budget = policy.check_config("budget")
-    assert budget.params == {
+    assert set(permissions.params) == {"allowed_models"}
+    budget = policy.check_config("budget").params["roles"]
+    assert budget["developer"] == {
         "requests_per_minute": 60,
         "tokens_per_day": 200000,
         "cost_per_day": 1.0,
     }
+    assert set(budget) == set(policy.roles)
     assert not policy.enabled("no_such_check")
     assert policy.check_config("no_such_check").params == {}
 

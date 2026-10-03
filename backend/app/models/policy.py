@@ -10,7 +10,7 @@ does not change.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -41,8 +41,18 @@ _Seconds = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 _Limit = Annotated[int, Field(ge=0)]
 _Size = Annotated[int, Field(gt=0)]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# A role or permission name. Stripped like _Text, so a token's "support" matches "support ".
+_Name = _Text
 _Roles = list[Literal["system", "user", "assistant", "tool"]]
 _Cost = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class RoleBudget(_Strict):
+    """One role's usage limits. A limit left out is unlimited for that role."""
+
+    requests_per_minute: _Limit | None = None
+    tokens_per_day: _Limit | None = None
+    cost_per_day: _Cost | None = None
 
 
 class _ExtraPattern(_Strict):
@@ -75,11 +85,10 @@ _IN, _CALL, _RESULT, _OUT = (
 # Only jev takes timeout_s (the pipeline applies it): the rule checks are synchronous CPU work that
 # a timeout could not interrupt, so a timeout_s there would only pretend to bound them.
 CHECK_SPECS: dict[str, CheckSpec] = {
-    "permissions": _spec({_IN, _CALL, _RESULT}, allowed_models=list[str], allowed_tools=list[str]),
-    # A limit left out is unlimited.
-    "budget": _spec(
-        {_IN, _RESULT}, requests_per_minute=_Limit, tokens_per_day=_Limit, cost_per_day=_Cost
-    ),
+    # The tools come from the user's roles (`roles` / `permissions`); the models from here.
+    "permissions": _spec({_IN, _CALL, _RESULT}, allowed_models=list[str]),
+    # Limits per role; a user gets the most generous of their roles, none at all is blocked.
+    "budget": _spec({_IN, _RESULT}, roles=dict[str, RoleBudget]),
     "loop_detection": _spec({_IN, _RESULT}, max_tool_calls=_Limit, max_repeats=_Limit),
     "signatures": _spec({_IN, _CALL, _RESULT}, categories=list[str], skip_roles=_Roles),
     "tool_args": _spec({_CALL}, allowed_root=_Text, categories=list[str], max_command_chars=_Size),
@@ -202,6 +211,10 @@ class Policy(_Strict):
     # The Jev risk score (0..1) at or above which Jev blocks; lower is stricter.
     jev_threshold: float = Field(ge=0.0, le=1.0)
     models: dict[str, ModelConfig]
+    # RBAC. permission -> tool names, and role -> permissions. Empty means no tool is allowed to
+    # anybody: deny by default. Users are not listed: their name and roles come from the token.
+    permissions: dict[_Name, list[_Text]] = Field(default_factory=dict)
+    roles: dict[_Name, list[_Text]] = Field(default_factory=dict)
     checks: dict[str, CheckSection] = Field(default_factory=dict)
     signatures: SignatureFeedConfig | None = None
     jev: JevConfig
@@ -222,6 +235,15 @@ class Policy(_Strict):
             if getattr(self, key) is not None:
                 msg = "profiles were removed: set the top-level jev_threshold and delete this key"
                 add((key,), msg, getattr(self, key))
+        for role, granted in self.roles.items():
+            for i, permission in enumerate(granted):
+                if permission not in self.permissions:
+                    add(("roles", role, i), "permission is not defined in permissions", permission)
+        budget_roles = self.check_config("budget").params.get("roles", {})
+        if isinstance(budget_roles, dict):  # a wrong type is reported by _check_section
+            for role in budget_roles:
+                if role not in self.roles:
+                    add(("checks", "budget", "roles", role), "role is not defined in roles", role)
         allowed_models = self.check_config("permissions").params.get("allowed_models", [])
         if isinstance(allowed_models, list):  # a wrong type is reported by _check_section
             for i, m in enumerate(allowed_models):
@@ -267,3 +289,16 @@ class Policy(_Strict):
 
     def check_config(self, check_id: str) -> CheckSection:
         return self.checks.get(check_id, CheckSection())
+
+    def allowed_tools(self, roles: Iterable[str]) -> frozenset[str]:
+        """The tools the given roles may use: the union over their permissions.
+
+        A role the policy does not define grants nothing, so a stale or forged role name in a
+        token can never widen access.
+        """
+        return frozenset(
+            tool
+            for role in roles
+            for permission in self.roles.get(role, [])
+            for tool in self.permissions.get(permission, [])
+        )

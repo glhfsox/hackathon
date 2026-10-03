@@ -2,11 +2,15 @@
 
 Base URL `http://localhost:8000`. All bodies are JSON unless noted. Model names refer to [models.md](models.md).
 
-## Agent-facing (`/v1`, no auth: every request is the caller `anonymous`)
+## Agent-facing (`/v1`, auth: `Authorization: Bearer <JWT>`)
+
+The token is signed with HS256 using the secret the agent shares with the layer. Claims: `sub` (user), `roles` (list of role names), `exp` (required). See [architecture §11](../docs/architecture.md).
 
 ### `POST /v1/chat/completions`
 
 Takes the standard OpenAI chat-completions request (`model`, `messages`, `tools`, `tool_choice`, `temperature`, `max_tokens`, `stream`).
+
+Tool access follows the token's roles. The `tools` the model sees are only those the roles allow. A `tool_calls` entry in the reply that the roles do not allow is removed, and `Tool call denied by policy: '<tool>'.` is appended to the message `content`. When no call remains, `finish_reason` is `stop`. Both are in the standard response shape, with no extra field.
 
 - **Allowed:** the standard OpenAI response, plus a `control` field:
   ```json
@@ -23,7 +27,7 @@ Takes the standard OpenAI chat-completions request (`model`, `messages`, `tools`
     "control": { "request_id": "…", "decisions": [ … ] }
   }
   ```
-- **Errors:** `400` malformed body. The error body is `{ "error": { "message", "type" } }`, as in OpenAI. It is audited.
+- **Errors:** `401` missing, invalid or expired token, `400` malformed body. The error body is `{ "error": { "message", "type" } }`, as in OpenAI. Both are audited.
 
 ## Dashboard-facing (`/api`, no auth: local demo only)
 
@@ -45,8 +49,10 @@ Takes the standard OpenAI chat-completions request (`model`, `messages`, `tools`
   "blocks_by_check": { "<check>": 0 },
   "latency_ms_by_check": { "<check>": { "p50": 0.0, "p95": 0.0 } },
   "overhead_ms": { "p50": 0.0, "p95": 0.0 },
-  "budget_by_caller": { "anonymous": { "tokens_today": 0, "tokens_limit": 0, "cost_today": 0.0, "cost_limit": 0.0 } }
+  "budget_by_caller": { "<user>": { "tokens_today": 0, "tokens_limit": 0, "cost_today": 0.0, "cost_limit": 0.0 } }
 }
 ```
 
-The playground uses `POST /v1/chat/completions` and renders the `control` field.
+`budget_by_caller` holds today's usage per user (the token's `sub`). Limits are set per role, and audit rows carry no roles, so both limits are reported as `0` (unknown here). The name is kept so the shape stays compatible.
+
+The playground uses `POST /v1/chat/completions` with a signed token and renders the `control` field. **OPEN:** how the playground obtains the token.

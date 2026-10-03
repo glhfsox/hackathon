@@ -28,6 +28,7 @@ from app.models import (
     TURN_SUMMARY,
     Action,
     AuditRecord,
+    Caller,
     CanonicalRequest,
     Checkpoint,
     CheckResult,
@@ -132,14 +133,22 @@ def _redact_text(text: str, redactions: list[Redaction]) -> str:
     return text
 
 
+# A request without a caller may use nothing: no tool, no budget (fail closed).
+NO_CALLER = Caller(role="none", allowed_tools=[])
+
+
 def build_context(
     policy: Policy,
+    caller: Caller = NO_CALLER,
     *,
     ledger: UsageLedger | None,
     signatures: list[Signature] | None,
     judge: Judge | None,
 ) -> CheckContext:
     return CheckContext(
+        caller_role=caller.role,
+        roles=list(caller.roles),
+        allowed_tools=list(caller.allowed_tools),
         ledger=ledger,
         signatures=signatures,
         jev_threshold=policy.jev_threshold,
@@ -179,6 +188,7 @@ async def run_checkpoint(
     request: CanonicalRequest,
     policy: Policy,
     policy_version: str,
+    caller: Caller = NO_CALLER,
     *,
     ledger: UsageLedger | None = None,
     signatures: list[Signature] | None = None,
@@ -204,7 +214,7 @@ async def run_checkpoint(
     the reply checkpoint too, so every row of a session gets the same id.
     """
     checkpoint = request.checkpoint
-    ctx = build_context(policy, ledger=ledger, signatures=signatures, judge=judge)
+    ctx = build_context(policy, caller, ledger=ledger, signatures=signatures, judge=judge)
     candidates = ordered_checks() if checks is None else checks
     results: list[CheckResult] = []
     blocked_by: str | None = None
@@ -391,6 +401,7 @@ class Pipeline:
         self,
         request: CanonicalRequest,
         snapshot: PolicySnapshot,
+        caller: Caller = NO_CALLER,
         *,
         usage: Usage | None = None,
     ) -> tuple[Decision, CanonicalRequest]:
@@ -399,6 +410,7 @@ class Pipeline:
             request,
             snapshot.policy,
             snapshot.version,
+            caller,
             ledger=self._ledger,
             signatures=self._signatures() if self._signatures is not None else None,
             judge=self._judge,

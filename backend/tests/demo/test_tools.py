@@ -31,7 +31,7 @@ async def test_every_fake_pii_value_is_detected_by_pii_secrets() -> None:
     result_text = tools.query_customers()
     request = CanonicalRequest(
         request_id="r1",
-        caller_id="anonymous",
+        caller_id="demo",
         model="gemma4",
         checkpoint=Checkpoint.TOOL_RESULT,
         messages=[

@@ -43,25 +43,45 @@ models:
     price_per_1k_tokens: 0.0
     timeout_s: 120
 
+# PERMISSIONS and ROLES: who may use which tool (RBAC, deny by default).
+#   permissions  permission name -> the tools it grants
+#   roles        role name -> the permissions it holds
+#   A user's allowed tools are the union over the permissions of all their roles. A tool listed
+#   in no permission is allowed to nobody. A role that names an undefined permission is an error.
+#   Users are not listed here: their name and roles come from the signed token (JWT).
+permissions:
+  customers.read: [query_customers]
+  files.read:     [read_file]
+  web.read:       [http_get]
+  shell.exec:     [run_shell]
+  tasks.delegate: [delegate]
+
+roles:
+  support:      [customers.read]
+  developer:    [customers.read, files.read, web.read, shell.exec]
+  orchestrator: [tasks.delegate]
+
 # CHECKS: one section per check; every key in a section is a PARAMETER handed to that check. A
 # check accepts only the parameters listed for it below. Only jev takes `timeout_s`: the rule
 # checks are fast synchronous code that a timeout could not interrupt. The `policy_loaded` audit
 # row names every check that is off.
 checks:
-  # The requested model (every request to the model: input and tool_result) and the tools the
-  # model asks for (tool_call) must be listed here; anything else is blocked.
+  # The requested model (every request to the model: input and tool_result) must be listed here,
+  # and the tools the model asks for (tool_call) must be allowed to the user's roles (`roles`
+  # above); anything else is blocked.
   #   allowed_models  must name models listed under `models`
-  #   allowed_tools   tools agents may call
   permissions:
     allowed_models: [gemma4]
-    allowed_tools: [query_customers, run_shell, read_file, http_get, delegate]
 
-  # Usage limits, checked on every request to the model: input and tool_result.
-  #   requests_per_minute, tokens_per_day, cost_per_day  leave one out for no limit
+  # Usage limits per role, counted per user (the token's `sub`) on every request to the model:
+  # input and tool_result. A user gets the most generous limits of their roles; a user none of
+  # whose roles is listed here is blocked.
+  #   roles.<role>  requests_per_minute, tokens_per_day, cost_per_day; leave one out for no limit
   budget:
-    requests_per_minute: 60
-    tokens_per_day: 200000
-    cost_per_day: 1.0
+    roles:
+      developer:    {requests_per_minute: 60, tokens_per_day: 200000, cost_per_day: 1.0}
+      orchestrator: {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
+      support:      {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}
 
   # Runaway agents, counted per agent turn (tool calls since the last user message): more than
   # max_tool_calls tool calls, or the same tool with identical arguments more than max_repeats times.

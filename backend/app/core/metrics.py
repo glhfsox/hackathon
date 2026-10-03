@@ -14,8 +14,9 @@ Definitions the numbers rely on:
   The same usage on a check row and on the turn_summary row therefore never counts twice.
 - Percentiles use the nearest-rank method: the value at rank ceil(p/100 * n) of the sorted
   values. No interpolation, so p50 of two values is the lower one. Empty input gives 0.0.
-- `since` narrows every figure except `budget_by_caller` and `economics.budget_utilization`,
-  which always cover the UTC day of `now` because they are compared against per-day limits.
+- `since` narrows every figure except `budget_by_caller`, which always covers the UTC day of
+  `now`: it is today's usage per user. Limits are per role and the audit rows carry no roles,
+  so they are reported as 0 (unknown here).
 
 `agents` and `economics` come from `turn_summary` rows only (one per checkpoint, written by the
 pipeline). A turn is one request, i.e. one agent step: its turn_summary rows grouped by
@@ -34,7 +35,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.proxy import ANONYMOUS_CALLER
 from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy, Mode
 from app.models.policy import CHECK_SPECS, Policy
 
@@ -111,11 +111,6 @@ def _sorted_counts(counter: Counter[str]) -> dict[str, int]:
 
 def _ratio(part: float, whole: float) -> float:
     return part / whole if whole else 0.0
-
-
-def _pct(used: float, limit: float | None) -> float | None:
-    # None (no limit) or 0 (nothing allowed) has no meaningful utilisation.
-    return 100.0 * used / limit if limit else None
 
 
 @dataclass
@@ -200,7 +195,6 @@ def _economics(
     tokens_today: Counter[str],
     cost_today: dict[str, float],
 ) -> dict[str, Any]:
-    budget = policy.check_config("budget").params
     cost_by_model: dict[str, float] = defaultdict(float)
     cost_by_caller: dict[str, float] = defaultdict(float)
     cost_by_day: dict[str, float] = defaultdict(float)
@@ -236,12 +230,6 @@ def _economics(
             "avg": _ratio(sum(per_session), len(per_session)),
         },
         "cost_per_turn_avg": _ratio(sum(t.cost for t in turns), len(turns)),
-        "budget_utilization": {
-            ANONYMOUS_CALLER: {
-                "tokens_pct": _pct(tokens_today[ANONYMOUS_CALLER], budget.get("tokens_per_day")),
-                "cost_pct": _pct(cost_today[ANONYMOUS_CALLER], budget.get("cost_per_day")),
-            }
-        },
         "blocked_before_upstream": blocked_before_upstream,
         "price_per_1k_tokens": {
             m: cfg.price_per_1k_tokens for m, cfg in sorted(policy.models.items())
@@ -326,8 +314,6 @@ def compute_metrics(
         if record.request_id is not None:
             by_turn[record.request_id].append(record)
     turns = [_turn(records) for records in by_turn.values()]
-    budget = policy.check_config("budget").params
-
     return {
         "jev_threshold": policy.jev_threshold,
         "totals": totals,
@@ -335,12 +321,13 @@ def compute_metrics(
         "latency_ms_by_check": {c: _p50_p95(v) for c, v in sorted(latencies.items())},
         "overhead_ms": _p50_p95(overhead),
         "budget_by_caller": {
-            ANONYMOUS_CALLER: {
-                "tokens_today": tokens_today[ANONYMOUS_CALLER],
-                "tokens_limit": budget.get("tokens_per_day") or 0,
-                "cost_today": cost_today[ANONYMOUS_CALLER],
-                "cost_limit": float(budget.get("cost_per_day") or 0.0),
+            cid: {
+                "tokens_today": tokens_today[cid],
+                "tokens_limit": 0,
+                "cost_today": cost_today[cid],
+                "cost_limit": 0.0,
             }
+            for cid in sorted(tokens_today.keys() | cost_today.keys())
         },
         # Additive fields beyond the contract shape.
         "enabled_checks": {cid: _enabled_at(policy, cid) for cid in check_ids},

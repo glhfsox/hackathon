@@ -107,7 +107,7 @@ def test_delegate_runs_the_worker_inside_the_orchestrators_tool_call(
     events: list[AgentEvent] = []
 
     result = run_orchestrator(
-        bridged_client(gateway),
+        bridged_client(gateway, ("orchestrator",)),
         bridged_client(gateway),
         "Which city does Jan Nowak live in?",
         on_event=events.append,
@@ -130,4 +130,4 @@ def test_delegate_runs_the_worker_inside_the_orchestrators_tool_call(
     # The worker's answer came back to the orchestrator as a tool result.
     assert orchestrator_second["messages"][-1]["content"] == "Jan Nowak lives in Warszawa."
     callers = {r.caller_id for r in read_jsonl(logs_dir) if r.check == "turn_summary"}
-    assert callers == {"anonymous"}
+    assert callers == {"orchestrator", "developer"}

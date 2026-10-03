@@ -9,23 +9,23 @@
   messages: [{role: user, content: "How many customers signed up last week?"}]
   expect: {action: block, check: permissions, reason_contains: "gpt-4o"}
 
-- name: tool in allowed_tools
+- name: tool allowed to the token's role
   checkpoint: tool_call
-  policy_patch: {checks: {permissions: {allowed_tools: [query_customers]}}}
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "Look up customer 42"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
   expect: {action: allow}
 
-- name: tool not in allowed_tools
+- name: tool not allowed to the token's role
   checkpoint: tool_call
-  policy_patch: {checks: {permissions: {allowed_tools: [query_customers]}}}
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "List the files on the server"}]
   reply: {role: assistant, content: null, tool_calls: [{id: "1", name: run_shell, arguments: {cmd: "ls"}}]}
   expect: {action: block, check: permissions, reason_contains: "run_shell"}
 
 - name: one disallowed tool among allowed ones blocks the reply
   checkpoint: tool_call
-  policy_patch: {checks: {permissions: {allowed_tools: [query_customers]}}}
+  roles: [support]   # support may only query customers
   messages: [{role: user, content: "Look up customer 42 and list the files"}]
   reply:
     role: assistant

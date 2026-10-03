@@ -1,8 +1,10 @@
 # Demo agents
 
 Two small agents written on the bare `openai` client (no framework). They are protected by the
-control layer through one setting only, the client's `base_url` (the API key is a placeholder:
-the layer does not check it).
+control layer through two settings: the client's `base_url`, and a signed JWT as its `api_key`
+(the OpenAI client sends it as the Bearer token). The runner mints one per agent with
+`JWT_SECRET`: the worker is user `worker` with role `developer`, the orchestrator user
+`orchestrator` with role `orchestrator`.
 
 | File | What it is |
 |------|------------|
@@ -58,7 +60,7 @@ change it):
 
 - `audit-YYYY-MM-DD.jsonl`: one row per check result, plus one `turn_summary` row per checkpoint
   with the agent and economic fields (`conversation_id`, `step`, `tools`, tokens, latency). Every
-  row's `caller_id` is `anonymous`; the agents are told apart by `conversation_id`.
+  row's `caller_id` is the agent's user (`worker`, `orchestrator`).
 - `metrics-latest.json` and `metrics-history.jsonl`: the `GET /api/metrics` body and its time
   series, refreshed every 5 s.
 
@@ -67,7 +69,8 @@ Langfuse traces are added when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` a
 ## Point the agents at a running server
 
 ```bash
-uv run uvicorn app.main:app --port 8000          # in another shell
+JWT_SECRET=... uv run uvicorn app.main:app --port 8000   # in another shell
+export JWT_SECRET=...                                    # the same secret
 uv run python -m demo.run --all --base-url http://localhost:8000/v1
 ```
 

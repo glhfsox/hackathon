@@ -1,7 +1,9 @@
 """Permissions: the request may use this model and these tools (docs/architecture.md §4, #1).
 
-The allow-lists are the check's own policy parameters `allowed_models` and `allowed_tools`; one
-left out allows nothing.
+The models come from the check's own policy parameter `allowed_models` (left out: none). The
+tools are those the user's roles allow (`roles` / `permissions` in the policy, resolved from the
+token by the proxy, which has already taken disallowed tools out of the request and replaced a
+disallowed call by a notice): this check is the last line of defence.
 
 The model is checked at `input` and `tool_result`: both are requests the proxy forwards upstream
 to `request.model`, and a trailing tool message must not skip the allow-list. Tools are checked at
@@ -32,6 +34,7 @@ class PermissionsCheck:
         self, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext
     ) -> CheckResult:
         started = time.perf_counter()
+        role = ctx.caller_role
         if request.checkpoint in (Checkpoint.INPUT, Checkpoint.TOOL_RESULT):
             if request.model not in settings.get("allowed_models", []):
                 reason = f"model {safe_label(request.model)!r} is not allowed"
@@ -44,14 +47,13 @@ class PermissionsCheck:
             if not calls:
                 reason = "tool_call checkpoint without tool calls in the reply"
                 return make_result(self.id, request, "error", reason, started)
-            allowed_tools = settings.get("allowed_tools", [])
-            denied = [c.name for c in calls if c.name not in allowed_tools]
+            denied = [c.name for c in calls if c.name not in ctx.allowed_tools]
             if denied:
                 names = ", ".join(repr(safe_label(n)) for n in dict.fromkeys(denied))
-                reason = f"tool {names} is not allowed"
+                reason = f"tool {names} is not allowed for role {role!r}"
                 return make_result(self.id, request, "block", reason, started)
             names = ", ".join(repr(safe_label(c.name)) for c in calls)
-            reason = f"tool {names} is allowed"
+            reason = f"tool {names} is allowed for role {role!r}"
             return make_result(self.id, request, "allow", reason, started)
 
         reason = f"permissions does not run at checkpoint {request.checkpoint.value}"

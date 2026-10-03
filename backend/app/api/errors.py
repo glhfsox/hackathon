@@ -6,16 +6,18 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.deps import get_proxy_service
+from app.core.proxy import UnauthorizedError
+from app.deps import get_proxy_service, get_token
 from app.models import PolicyError
 from app.protocols.adapter import InvalidRequestError
 from app.schemas.error_detail import ErrorDetail
 from app.schemas.error_response import ErrorResponse
 from app.schemas.field_errors import FieldErrors
 
-# The agent-facing endpoints answer 400 in the OpenAI error shape.
+# The agent-facing endpoints answer 401 and 400 in the OpenAI error shape.
 AGENT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
+    status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
 }
 _AGENT_PREFIX = "/v1/"
 
@@ -33,6 +35,10 @@ def unprocessable(errors: list[PolicyError]) -> JSONResponse:
     )
 
 
+def unauthorized(exc: UnauthorizedError) -> JSONResponse:
+    return error_response(status.HTTP_401_UNAUTHORIZED, str(exc), "authentication_error")
+
+
 def bad_request(exc: InvalidRequestError) -> JSONResponse:
     return error_response(status.HTTP_400_BAD_REQUEST, str(exc), "invalid_request_error")
 
@@ -43,7 +49,7 @@ def describe_errors(errors: Sequence[Any]) -> str:
 
 
 async def agent_validation_handler(request: Request, exc: Exception) -> JSONResponse:
-    """A body FastAPI rejects on an agent endpoint: audited, 400 OpenAI shape.
+    """A body FastAPI rejects on an agent endpoint: authenticated, audited, 400 OpenAI shape.
 
     The dashboard endpoints keep FastAPI's 422.
     """
@@ -53,6 +59,8 @@ async def agent_validation_handler(request: Request, exc: Exception) -> JSONResp
         return await request_validation_exception_handler(request, exc)
     service = get_proxy_service(request)
     try:
-        await service.reject_body(describe_errors(exc.errors()))
+        await service.reject_body(describe_errors(exc.errors()), token=get_token(request))
+    except UnauthorizedError as unknown:
+        return unauthorized(unknown)
     except InvalidRequestError as invalid:
         return bad_request(invalid)

@@ -4,8 +4,9 @@ from app.checks.base import CheckContext
 from app.checks.permissions import CHECK
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 
-CTX = CheckContext()
-SETTINGS = {"allowed_models": ["gemma4"], "allowed_tools": ["query_customers"]}
+# The tools come from the user's roles (the proxy resolves them); the models from the policy.
+CTX = CheckContext(caller_role="support", allowed_tools=["query_customers"])
+SETTINGS = {"allowed_models": ["gemma4"]}
 
 
 def _request(
@@ -20,7 +21,7 @@ def _request(
         reply = Message(role="assistant", tool_calls=calls)
     return CanonicalRequest(
         request_id="r",
-        caller_id="anonymous",
+        caller_id="demo",
         model=model,
         checkpoint=checkpoint,
         messages=messages or [Message(role="user", content="hi")],
@@ -105,12 +106,12 @@ async def test_output_checkpoint_is_an_error():
 
 
 # Tool names match exactly: a case or whitespace variant is a different tool and is rejected.
-DEV_SETTINGS = {"allowed_models": ["gemma4"], "allowed_tools": ["query_customers", "run_shell"]}
+DEV_CTX = CheckContext(caller_role="developer", allowed_tools=["query_customers", "run_shell"])
 
 
 @pytest.mark.parametrize("name", ["Run_Shell", "run_shell ", " run_shell", ""])
 async def test_tool_name_variants_are_not_allowed(name):
-    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=[name]), DEV_SETTINGS, CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=[name]), SETTINGS, DEV_CTX)
     assert result.verdict == "block"
     # A name that is not a plain identifier is withheld from the reason (it is model-chosen).
     shown = name if name == "Run_Shell" else "<unprintable name>"
@@ -118,11 +119,11 @@ async def test_tool_name_variants_are_not_allowed(name):
 
 
 async def test_exact_tool_name_is_allowed():
-    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=["run_shell"]), DEV_SETTINGS, CTX)
+    result = await CHECK.run(_request(Checkpoint.TOOL_CALL, tools=["run_shell"]), SETTINGS, DEV_CTX)
     assert result.verdict == "allow"
 
 
-EMPTY_SETTINGS = {"allowed_models": [], "allowed_tools": []}
+EMPTY_SETTINGS = {"allowed_models": []}
 
 
 # An allow-list left out of the policy allows nothing, like an empty one.
@@ -134,10 +135,9 @@ async def test_empty_allowed_models_blocks_every_model(checkpoint, settings):
     assert "gemma4" in result.reason
 
 
-@pytest.mark.parametrize("settings", [EMPTY_SETTINGS, {}])
-async def test_empty_allowed_tools_blocks_every_tool(settings):
+async def test_a_user_whose_roles_allow_no_tool_is_blocked():
     result = await CHECK.run(
-        _request(Checkpoint.TOOL_CALL, tools=["query_customers"]), settings, CTX
+        _request(Checkpoint.TOOL_CALL, tools=["query_customers"]), SETTINGS, CheckContext()
     )
     assert result.verdict == "block"
     assert "query_customers" in result.reason

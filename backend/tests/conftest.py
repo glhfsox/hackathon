@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+import jwt
 import pytest
 import respx
 from fastapi.testclient import TestClient
@@ -30,6 +31,26 @@ from app.observability.sinks import MemoryAuditSink
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 UPSTREAM_URL = "http://localhost:11434/v1/chat/completions"
 MODELS_URL = "http://localhost:11434/v1/models"
+
+
+JWT_SECRET = "test-jwt-secret-at-least-32-bytes-long"
+
+
+def token(user: str = "demo", roles: tuple[str, ...] = ("developer",), **claims: Any) -> str:
+    """A token the layer accepts: signed with the test secret, valid for a day."""
+    payload = {"sub": user, "roles": list(roles), "exp": int(time.time()) + 86400, **claims}
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def auth(user: str = "demo", roles: tuple[str, ...] = ("developer",)) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token(user, roles)}"}
+
+
+@pytest.fixture(autouse=True)
+def jwt_secret(monkeypatch: pytest.MonkeyPatch) -> str:
+    """The app refuses to start without JWT_SECRET; every test gets the same known one."""
+    monkeypatch.setenv("JWT_SECRET", JWT_SECRET)
+    return JWT_SECRET
 
 
 @pytest.fixture
@@ -170,4 +191,6 @@ def gateway(
     for name in ("TYPESAFE_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         monkeypatch.delenv(name, raising=False)
     with TestClient(create_app(policy_path=policy_path, logs_dir=logs_dir)) as client:
+        # Every request carries a developer's token unless a test sets its own header.
+        client.headers.update(auth())
         yield client

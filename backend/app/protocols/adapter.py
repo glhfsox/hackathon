@@ -28,7 +28,8 @@ class ProviderAdapter(Protocol):
     ) -> dict[str, Any]:
         """Canonical (with redactions applied) back to a vendor payload.
 
-        Starts from the original body so parameters the layer does not model are kept.
+        Starts from the original body so parameters the layer does not model are kept. The tools
+        come from the canonical request: a tool removed from it is removed from the payload too.
         """
         ...
 

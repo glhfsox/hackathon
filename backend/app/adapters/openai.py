@@ -77,6 +77,13 @@ def _parse_tool_def(raw: dict[str, Any]) -> ToolDef:
         raise InvalidRequestError(f"invalid tool definition: {_describe(exc)}") from exc
 
 
+def _tool_name(raw: dict[str, Any]) -> str | None:
+    """The function name of a tool definition or of a `tool_choice` object."""
+    function = raw.get("function")
+    name = function.get("name") if isinstance(function, dict) else None
+    return name if isinstance(name, str) else None
+
+
 def _first_choice(upstream_response: dict[str, Any]) -> dict[str, Any]:
     choices = upstream_response.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -113,6 +120,20 @@ class OpenAIAdapter:
                 out["content"] = message.content
             messages.append(out)
         payload["messages"] = messages
+        if original.tools is not None:
+            # The canonical tools are the ones the model may be shown: anything removed from them
+            # (by the role-based filter) must not reach the model through the raw payload.
+            offered = {tool.name for tool in request.tools}
+            kept = [raw for raw in original.tools if _tool_name(raw) in offered]
+            if kept:
+                payload["tools"] = kept
+            else:
+                # OpenAI rejects tool_choice without tools
+                payload.pop("tools", None)
+                payload.pop("tool_choice", None)
+            choice = payload.get("tool_choice")
+            if isinstance(choice, dict) and _tool_name(choice) not in offered:
+                payload.pop("tool_choice")  # it forces a tool the model is no longer shown
         payload["stream"] = False  # streaming is accepted but always answered whole
         payload.pop("stream_options", None)  # only valid together with stream: true
         return payload
@@ -160,6 +181,8 @@ class OpenAIAdapter:
         finish = _first_choice(upstream_response).get("finish_reason")
         if not isinstance(finish, str):
             finish = "tool_calls" if reply.tool_calls else "stop"
+        elif finish == "tool_calls" and not reply.tool_calls:
+            finish = "stop"  # every call was denied, so there is nothing left to run
         upstream_id = upstream_response.get("id")
         created = upstream_response.get("created")
         return ChatCompletionResponse.model_validate(

@@ -4,7 +4,7 @@ Sync Impact Report
 - I and VI: no strictness profiles or check modes; an erroring check always blocks
 - Earlier: 1.0.0 → 2.0.0
 - Redefined: VIII. Transparent Integration (no API-key identity, no second tool entry point)
-- Scope Constraints: authentication is out of scope (a teammate adds JWT identity)
+- VIII and Scope (2.2.0): identity is a verified JWT; authentication beyond verifying it is out of scope
 - Earlier: template (unversioned) → 1.0.0 (initial ratification)
 - Principles defined:
   I. Policy Is the Single Source of Behaviour
@@ -98,8 +98,9 @@ Rationale: resilience and traceability are the product; unrecorded decisions can
 ### VIII. Transparent Integration
 
 - An agent MUST be protectable by changing only its model endpoint, with no code changes.
-- Until caller identity lands, every request is one anonymous caller. The layer protects only
-  what passes through it: an agent that ignores a verdict and runs a blocked tool is not stopped.
+- Caller identity MUST come from a verified, signed token; its roles decide what the user may do.
+  The layer protects only what passes through it: an agent that ignores a verdict and runs a
+  blocked tool is not stopped.
 
 Rationale: zero-friction adoption is what makes the layer usable by any agent.
 
@@ -125,7 +126,7 @@ Rationale: 24 hours, four people; only the working control layer is scored.
   (fake customer data with PII, a shell/code executor); a dashboard with policy editor and chat
   playground; the automated test suite.
 - Out of scope: a multi-agent SDK or orchestrator, agent-topology configuration, RAG, adapters
-  beyond the first protocol, and authentication (JWT-based caller identity is a teammate's work).
+  beyond the first protocol, and authentication beyond verifying signed tokens.
 
 ## Development Workflow
 
@@ -146,4 +147,4 @@ Rationale: 24 hours, four people; only the working control layer is scored.
 - Every plan and PR MUST be checked for compliance. A deviation MUST be justified in the plan's
   Complexity Tracking section or rejected.
 
-**Version**: 2.1.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-10-03
+**Version**: 2.2.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-10-03

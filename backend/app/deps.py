@@ -48,9 +48,19 @@ def get_audit_reader(request: Request) -> AuditReader:
     return _configured(reader, "audit reader")
 
 
+def get_token(request: Request) -> str | None:
+    """The Bearer token: None without an Authorization header, "" when it is not a Bearer one."""
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    scheme, _, key = header.partition(" ")
+    return key.strip() if scheme.lower() == "bearer" else ""
+
+
 PolicyProviderDep = Annotated[PolicyProvider, Depends(get_policy_provider)]
 ProxyServiceDep = Annotated[ProxyService, Depends(get_proxy_service)]
 UpstreamDep = Annotated[Upstream, Depends(get_upstream)]
 JudgeDep = Annotated[Judge, Depends(get_judge)]
 JudgeHealthDep = Annotated[JudgeHealth, Depends(get_judge_health)]
 AuditReaderDep = Annotated[AuditReader, Depends(get_audit_reader)]
+TokenDep = Annotated[str | None, Depends(get_token)]

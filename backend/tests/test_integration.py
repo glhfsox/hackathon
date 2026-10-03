@@ -17,7 +17,7 @@ from app.core.budget import UsageLedger
 from app.core.pipeline import run_checkpoint
 from app.core.policy_store import parse_policy
 from app.core.signatures import load_signatures
-from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef
+from app.models import Action, Caller, CanonicalRequest, Checkpoint, Message, ToolCall, ToolDef
 from app.models.policy import CHECK_SPECS, Policy
 from app.observability.sinks import MemoryAuditSink
 from tests.conftest import FakeJudge
@@ -32,6 +32,12 @@ SENSITIVE = f"my ssn: {RAW_SSN}, card {RAW_CARD}"
 
 def _policy() -> Policy:
     return parse_policy(POLICY_FILE.read_text())
+
+
+def _developer(policy: Policy) -> Caller:
+    """A developer, as the shipped policy's roles define one: the user of these requests."""
+    tools = sorted(policy.allowed_tools(["developer"]))
+    return Caller(role="developer", roles=["developer"], allowed_tools=tools)
 
 
 def _signatures(policy: Policy) -> Any:
@@ -104,6 +110,7 @@ async def test_production_registry_runs_every_check_in_cost_order() -> None:
             _request(checkpoint, messages, reply),
             policy,
             policy.version,
+            _developer(policy),
             ledger=UsageLedger(),
             signatures=signatures,
             judge=judge,
@@ -287,6 +294,7 @@ async def test_a_tool_args_block_stops_before_jev() -> None:
         request,
         policy,
         policy.version,
+        _developer(policy),
         ledger=UsageLedger(),
         signatures=_signatures(policy),
         judge=judge,

@@ -25,6 +25,7 @@ Env (`.env`, never committed):
 
 | Var | Needed | What |
 |---|---|---|
+| `JWT_SECRET` | yes | Secret the agents sign their JWT with. The layer does not start without it |
 | `TYPESAFE_API_KEY` | no | Jev. Empty: local Ollama fallback |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | no | Tracing. Empty: off |
 | `POLICY_PATH` | no | Default `backend/policy.yaml` |
@@ -48,7 +49,9 @@ app/
     pipeline.py      Pipeline + run_checkpoint: runs checks, verdict -> action, audit rows
     policy_store.py  PolicyStore: load, validate, hot reload, save
     jev.py           JevClient: Jev -> Ollama fallback -> fail closed, cache, breaker
-    budget.py        UsageLedger: usage counters per caller_id (today: one, `anonymous`)
+    budget.py        UsageLedger: usage counters per caller_id (the token's user)
+    auth.py          JwtAuthenticator: verifies the Bearer JWT (HS256, `sub`, `roles`, `exp`)
+    rbac.py          filter_tools / deny_tool_calls: role-based tool access
     signatures.py    SignatureFeed: external attack patterns, auto refresh
     metrics.py       compute_metrics from audit rows
     upstream.py      HTTP client to the model
@@ -62,7 +65,7 @@ demo/                two demo agents + tools. Not scored
 
 ## One request
 
-1. No auth: caller_id is always `anonymous` (`ANONYMOUS_CALLER` in `core/proxy.py`). JWT comes later.
+1. Bearer JWT -> user (`sub`) and roles. Bad or missing token: 401, audit `auth_failed`. Tools the roles do not allow are removed from the request; a call to one in the reply becomes a notice (audit `rbac`).
 2. Take ONE policy snapshot. Use it to the end.
 3. Adapter: OpenAI JSON -> `CanonicalRequest`.
 4. Checkpoint: last message is `tool` -> `tool_result`, else `input`.
@@ -109,7 +112,9 @@ Rejected at load: unknown keys, unknown check id, an old mode key (`input: block
 
 - `jev_threshold`: Jev blocks at or above this score.
 - `checks.<id>`: present = on, every key is a param. Leave the section out to turn the check off.
-- `checks.permissions`: `allowed_models`, `allowed_tools` (left out = nothing allowed). `checks.budget`: `requests_per_minute`, `tokens_per_day`, `cost_per_day` (left out = unlimited). Global, for every request.
+- `permissions` / `roles`: permission -> tools, role -> permissions. A user's tools = union over their roles. Deny by default.
+- `checks.permissions.allowed_models`: models anyone may request.
+- `checks.budget.roles.<role>`: `requests_per_minute`, `tokens_per_day`, `cost_per_day` (left out = unlimited), counted per user. Most generous of the user's roles wins; no budget for any role = blocked.
 - `models`: upstream URL, price, timeout.
 - `skip_roles: [system]` on signatures, pii_secrets, jev: system prompt is not scanned. Remove to scan it.
 

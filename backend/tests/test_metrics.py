@@ -13,10 +13,12 @@ NOW = datetime(2026, 10, 3, 12, 30, tzinfo=UTC)
 DEV_POLICY = {
     "version": "0.1",
     "jev_threshold": 0.6,
+    "permissions": {"customers.read": ["query_customers"]},
+    "roles": {"developer": ["customers.read"]},
     "models": {"gemma4": {"upstream_base_url": "http://localhost:11434/v1"}},
     "checks": {
         "permissions": {},
-        "budget": {"requests_per_minute": 60, "tokens_per_day": 200000, "cost_per_day": 1.0},
+        "budget": {"roles": {"developer": {"tokens_per_day": 200000, "cost_per_day": 1.0}}},
         "loop_detection": {"max_tool_calls": 10},
         "signatures": {},
         "tool_args": {"allowed_root": "/workspace"},
@@ -148,9 +150,9 @@ def test_empty_input():
     assert m["timeline"] == [] and m["top_block_reasons"] == []
     assert m["tokens_total"] == 0 and m["cost_total"] == 0.0
     assert m["decided_by"] == {"rules": 0, "jev": 0, "fallback": 0}
-    assert m["budget_by_caller"] == {"anonymous": _budget(0, 200000, 0.0, 1.0)}
+    # Today's usage per user; nobody has used anything yet.
+    assert m["budget_by_caller"] == {}
     assert m["agents"] == {}
-    zero_use = {"tokens_pct": 0.0, "cost_pct": 0.0}
     assert m["economics"] == {
         "cost_by_model": {},
         "cost_by_caller": {},
@@ -158,7 +160,6 @@ def test_empty_input():
         "tokens_by_model": {},
         "cost_per_session": {"p50": 0.0, "p95": 0.0, "avg": 0.0},
         "cost_per_turn_avg": 0.0,
-        "budget_utilization": {"anonymous": zero_use},
         "blocked_before_upstream": 0,
         "price_per_1k_tokens": {"gemma4": 0.0},
     }
@@ -185,7 +186,11 @@ def test_hand_built_dataset_exact():
     assert m["rules_overhead_ms"] == {"p50": 1.25, "p95": 3.0}
     assert m["jev_latency_ms"] == {"p50": 100.0, "p95": 200.0}
     # Budgets are global and reported for the current caller only; support's rows are history.
-    assert m["budget_by_caller"] == {"anonymous": _budget(1600, 200000, 0.75, 1.0)}
+    # Limits are per role and audit rows carry no roles: reported as 0.
+    assert m["budget_by_caller"] == {
+        "anonymous": _budget(1600, 0, 0.75, 0.0),
+        "support": _budget(300, 0, 0.0, 0.0),
+    }
     assert m["enabled_checks"]["pii_secrets"] == {
         "input": "redact",
         "tool_call": "redact",
@@ -267,7 +272,7 @@ def test_budget_counts_today_only():
     assert m["tokens_total"] == 5010
     # Same records seen from the next day: nothing is "today" any more.
     later = compute_metrics(records, _policy(), now=datetime(2026, 10, 4, 0, 0, 1, tzinfo=UTC))
-    assert later["budget_by_caller"]["anonymous"]["tokens_today"] == 0
+    assert "anonymous" not in later["budget_by_caller"]
 
 
 def test_unlimited_budget_reports_zero_limits():
@@ -493,8 +498,6 @@ def test_economics_section_exact():
         # sessions s2 0.0, s1 1.75, s3 2.0
         "cost_per_session": {"p50": 1.75, "p95": 2.0, "avg": 1.25},
         "cost_per_turn_avg": 0.75,
-        # Today only: anonymous used 3500 of 200000 tokens and 1.75 of 1.0 cost.
-        "budget_utilization": {"anonymous": {"tokens_pct": 1.75, "cost_pct": 175.0}},
         "blocked_before_upstream": 1,
         "price_per_1k_tokens": {"big": 2.0, "gemma4": 0.5},
     }
@@ -507,5 +510,3 @@ def test_agents_and_economics_follow_since():
     assert (m["agents"]["anonymous"]["turns"], m["agents"]["anonymous"]["sessions"]) == (2, 2)
     assert m["economics"]["cost_by_day"] == {"2026-10-03": 0.25}
     assert m["economics"]["blocked_before_upstream"] == 1
-    # Budget utilisation is per day, not per window.
-    assert m["economics"]["budget_utilization"]["anonymous"]["tokens_pct"] == 1.75

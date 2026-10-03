@@ -8,7 +8,7 @@ imports another check.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.core.budget import UsageLedger
@@ -31,6 +31,10 @@ class CheckContext:
     Checks never import other checks or the policy store; the pipeline fills this in.
     """
 
+    # The user, from the verified token: shown in reasons, and what permissions and budget use.
+    caller_role: str = ""
+    roles: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=list)
     ledger: UsageLedger | None = None
     # None means the feed never loaded: the signatures check must report an error, not allow.
     signatures: list[Signature] | None = None

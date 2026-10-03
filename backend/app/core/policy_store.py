@@ -121,6 +121,21 @@ _PolicyLoader.add_implicit_resolver(
 )
 
 
+# Top-level keys that used to exist, with what replaced them. Pasting an old file back gets this
+# instead of the bare "Extra inputs are not permitted".
+_REMOVED_KEYS = {
+    "callers": "removed: users and their roles come from the signed token; "
+    "define `permissions` and `roles` instead",
+}
+
+
+def _error_message(error: Any) -> str:
+    loc = error["loc"]
+    if error["type"] == "extra_forbidden" and len(loc) == 1 and loc[0] in _REMOVED_KEYS:
+        return _REMOVED_KEYS[loc[0]]
+    return str(error["msg"])
+
+
 def parse_policy(yaml_text: str) -> Policy:
     """Parse and validate policy YAML. Every failure raises PolicyRejectedError."""
     try:
@@ -138,7 +153,7 @@ def parse_policy(yaml_text: str) -> Policy:
         return Policy.model_validate(raw)
     except ValidationError as exc:
         raise PolicyRejectedError(
-            [PolicyError(loc=_dotted(e["loc"]), msg=e["msg"]) for e in exc.errors()]
+            [PolicyError(loc=_dotted(e["loc"]), msg=_error_message(e)) for e in exc.errors()]
         ) from exc
 
 
@@ -161,6 +176,10 @@ def _enabled_summary(policy: Policy) -> str:
     valid (the policy decides), but never silently so."""
     off = [cid for cid in CHECK_SPECS if not policy.enabled(cid)]
     summary = f"{len(CHECK_SPECS) - len(off)} checks on, jev_threshold {policy.jev_threshold}"
+    summary += f"; {len(policy.roles)} roles, {len(policy.permissions)} permissions"
+    if not any(policy.allowed_tools([role]) for role in policy.roles):
+        # Valid (deny by default), but nobody can use any tool, so it is never silent.
+        summary += "; no role grants any tool, every tool is denied"
     return f"{summary}; off: {', '.join(off)}" if off else summary
 
 

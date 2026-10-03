@@ -18,14 +18,14 @@ def _request(checkpoint: Checkpoint = Checkpoint.INPUT) -> CanonicalRequest:
         ]
     return CanonicalRequest(
         request_id="r",
-        caller_id="anonymous",
+        caller_id="demo",
         model="gemma4",
         checkpoint=checkpoint,
         messages=messages,
     )
 
 
-def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str = "anonymous"):
+def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str = "demo"):
     # A frozen clock keeps every preloaded request inside the minute window.
     ledger = UsageLedger(clock=lambda: 1_000_000.0)
     for _ in range(requests):
@@ -35,9 +35,18 @@ def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str =
     return ledger
 
 
+def _settings(limits: dict[str, float]) -> dict:
+    """`limits` as the budget of the role `r`, the only role of the test user."""
+    return {"roles": {"r": limits}}
+
+
+def _ctx(ledger: UsageLedger | None, roles: tuple[str, ...] = ("r",)) -> CheckContext:
+    return CheckContext(ledger=ledger, roles=list(roles))
+
+
 async def _run(ledger: UsageLedger | None, **limits: float):
-    """Run the check with `limits` as its policy parameters."""
-    return await CHECK.run(_request(), limits, CheckContext(ledger=ledger))
+    """Run the check with `limits` as the user's role budget."""
+    return await CHECK.run(_request(), _settings(limits), _ctx(ledger))
 
 
 def test_metadata():
@@ -49,8 +58,8 @@ def test_metadata():
 
 async def test_exhausted_budget_blocks_at_tool_result():
     limits = {"requests_per_minute": 30, "tokens_per_day": 50000, "cost_per_day": 0.5}
-    ctx = CheckContext(ledger=_ledger(requests=30, tokens=50000, cost=0.5))
-    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), limits, ctx)
+    ctx = _ctx(_ledger(requests=30, tokens=50000, cost=0.5))
+    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), _settings(limits), ctx)
     assert result.verdict == "block"
     assert result.checkpoint == Checkpoint.TOOL_RESULT
     assert "requests_per_minute exhausted: 30/30" in result.reason
@@ -59,8 +68,9 @@ async def test_exhausted_budget_blocks_at_tool_result():
 
 
 async def test_within_budget_allows_at_tool_result():
-    ctx = CheckContext(ledger=_ledger(requests=29))
-    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), {"requests_per_minute": 30}, ctx)
+    ctx = _ctx(_ledger(requests=29))
+    settings = _settings({"requests_per_minute": 30})
+    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), settings, ctx)
     assert result.verdict == "allow"
 
 
@@ -138,5 +148,30 @@ async def test_check_does_not_record_usage():
     ledger = _ledger()
     for _ in range(3):
         await _run(ledger, requests_per_minute=10, tokens_per_day=10, cost_per_day=1.0)
-    assert ledger.requests_last_minute("anonymous") == 0
-    assert ledger.tokens_today("anonymous") == 0
+    assert ledger.requests_last_minute("demo") == 0
+    assert ledger.tokens_today("demo") == 0
+
+
+# --- limits per role --------------------------------------------------------------------
+
+
+ROLES = {
+    "support": {"requests_per_minute": 30, "tokens_per_day": 50000},
+    "developer": {"requests_per_minute": 60},  # no token limit: unlimited tokens
+}
+
+
+async def test_the_most_generous_limit_of_the_users_roles_applies():
+    ledger = _ledger(requests=45, tokens=90000)
+    both = await CHECK.run(_request(), {"roles": ROLES}, _ctx(ledger, ("support", "developer")))
+    support_only = await CHECK.run(_request(), {"roles": ROLES}, _ctx(ledger, ("support",)))
+    assert both.verdict == "allow", both.reason  # 45/60 requests, tokens unlimited
+    assert support_only.verdict == "block"
+    assert "requests_per_minute exhausted: 45/30" in support_only.reason
+
+
+@pytest.mark.parametrize("roles", [(), ("guest",)])
+async def test_a_user_without_a_role_budget_is_blocked(roles):
+    result = await CHECK.run(_request(), {"roles": ROLES}, _ctx(_ledger(), roles))
+    assert result.verdict == "block"
+    assert "no budget for roles" in result.reason

@@ -1,5 +1,5 @@
-# Budget check. Limits come from policy.yaml checks.budget
-# (60 req/min, 200000 tokens/day, cost 1.0/day).
+# Budget check. Limits per role come from policy.yaml checks.budget.roles
+# (developer, the default role here: 60 req/min, 200000 tokens/day, cost 1.0/day; support: 30 req/min).
 # `usage` preloads the ledger; a limit that is reached blocks the next request.
 
 - name: budget allows no usage
@@ -45,9 +45,9 @@
     check: budget
     reason_contains: "cost_per_day exhausted"
 
-- name: budget uses the limits from the policy
+- name: budget uses the limits of the token's role
   checkpoint: input
-  policy_patch: {checks: {budget: {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}}}
+  roles: [support]   # 30 req/min, 50000 tokens/day, 0.5 cost/day
   messages: [{role: user, content: "Look up the status of order 42."}]
   usage: {requests_last_minute: 30}
   expect:
@@ -59,7 +59,7 @@
 # forwarded upstream too, so it must not skip the budget.
 - name: budget blocks exhausted usage at tool_result
   checkpoint: tool_result
-  policy_patch: {checks: {budget: {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}}}
+  roles: [support]   # 30 req/min, 50000 tokens/day, 0.5 cost/day
   messages:
     - {role: user, content: "Look up customer 42."}
     - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
@@ -72,7 +72,7 @@
 
 - name: budget allows usage within limits at tool_result
   checkpoint: tool_result
-  policy_patch: {checks: {budget: {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}}}
+  roles: [support]   # 30 req/min, 50000 tokens/day, 0.5 cost/day
   messages:
     - {role: user, content: "Look up customer 42."}
     - {role: assistant, content: null, tool_calls: [{id: "1", name: query_customers, arguments: {customer_id: 42}}]}
@@ -81,3 +81,21 @@
   expect:
     action: allow
     check: budget
+
+- name: budget gives a user the most generous limits of their roles
+  checkpoint: input
+  roles: [support, developer]
+  messages: [{role: user, content: "What is the capital of France?"}]
+  usage: {requests_last_minute: 30}
+  expect:
+    action: allow
+    check: budget
+
+- name: budget blocks a user none of whose roles has a budget
+  checkpoint: input
+  roles: [guest]
+  messages: [{role: user, content: "What is the capital of France?"}]
+  expect:
+    action: block
+    check: budget
+    reason_contains: "no budget for roles 'guest'"

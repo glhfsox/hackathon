@@ -7,7 +7,9 @@
 
 Without --base-url it starts the control layer (app.main.create_app) in-process under uvicorn,
 on a temp copy of policy.yaml and its signature feed: scenarios that edit the policy edit that
-copy, never the real file.
+copy, never the real file. Each agent sends its own JWT, signed with JWT_SECRET: the worker has
+the role developer, the orchestrator the role orchestrator. With --base-url, set JWT_SECRET to the
+server's secret; otherwise the in-process layer gets a random one for this run.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -29,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
+import jwt
 import openai
 import uvicorn
 import yaml
@@ -44,9 +48,11 @@ log = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 POLICY_FILE = BACKEND_DIR / "policy.yaml"
 DEFAULT_LOGS = BACKEND_DIR / "logs"
-# The control layer does not check API keys, but the OpenAI client requires one.
-CLIENT_API_KEY = "demo"
-# The budget scenario sets this global limit in the temp policy copy.
+# The users the agents act as, and their roles in policy.yaml.
+WORKER = ("worker", "developer")
+ORCHESTRATOR = ("orchestrator", "orchestrator")
+TOKEN_TTL_S = 3600
+# The budget scenario sets this limit for the worker's role in the temp policy copy.
 BUDGET_TOKENS_PER_DAY = 100
 # The policy store polls about once a second.
 RELOAD_TIMEOUT_S = 10.0
@@ -179,10 +185,14 @@ class Demo:
     gateway: LocalGateway | None  # None when --base-url targets an external proxy
     events: list[AgentEvent] = field(default_factory=list)
 
-    def client(self) -> openai.OpenAI:
+    def client(self, agent: tuple[str, str] = WORKER) -> openai.OpenAI:
+        """A client for one agent: its token is the API key the OpenAI client sends as Bearer."""
+        user, role = agent
+        claims = {"sub": user, "roles": [role], "exp": int(time.time()) + TOKEN_TTL_S}
+        token = jwt.encode(claims, os.environ["JWT_SECRET"], algorithm="HS256")
         # One attempt per request: every request is one audited turn.
         return openai.OpenAI(
-            base_url=self.base_url, api_key=CLIENT_API_KEY, max_retries=0, timeout=CLIENT_TIMEOUT_S
+            base_url=self.base_url, api_key=token, max_retries=0, timeout=CLIENT_TIMEOUT_S
         )
 
     def on_event(self, event: AgentEvent) -> None:
@@ -287,8 +297,8 @@ def scenario_delegate(demo: Demo) -> None:
     prompt = "Which city does our customer Jan Nowak live in?"
     print(f"\nuser > {prompt}")
     result = run_orchestrator(
-        demo.client(),
-        demo.client(),
+        demo.client(ORCHESTRATOR),
+        demo.client(WORKER),
         prompt,
         model=demo.model,
         on_event=demo.on_event,
@@ -299,12 +309,12 @@ def scenario_delegate(demo: Demo) -> None:
 def scenario_budget(demo: Demo) -> None:
     def tiny_budget(text: str) -> str:
         raw = yaml.safe_load(text)
-        raw["checks"]["budget"]["tokens_per_day"] = BUDGET_TOKENS_PER_DAY
+        raw["checks"]["budget"]["roles"][WORKER[1]]["tokens_per_day"] = BUDGET_TOKENS_PER_DAY
         return yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
 
-    # The budget is global, so tokens earlier scenarios spent today count too: after --all the
-    # first request is already refused.
-    print(f"policy edit: checks.budget.tokens_per_day: {BUDGET_TOKENS_PER_DAY}")
+    # Usage is counted per user, so tokens the worker spent in earlier scenarios today count
+    # too: after --all the first request is already refused.
+    print(f"policy edit: checks.budget.roles.{WORKER[1]}.tokens_per_day: {BUDGET_TOKENS_PER_DAY}")
     with demo.edited_policy(tiny_budget):
         first = demo.worker("Look up customer John Smith and tell me which plan he is on.")
         if not _blocked_by(first, "budget"):
@@ -379,9 +389,14 @@ def main(argv: list[str] | None = None) -> int:
     failed: list[str] = []
     with ExitStack() as stack:
         if args.base_url:
+            if not os.environ.get("JWT_SECRET"):
+                print("error: set JWT_SECRET to the secret the proxy verifies tokens with")
+                return 2
             demo = Demo(args.base_url, args.model, gateway=None)
             print(f"control layer: {args.base_url} (external)")
         else:
+            # The in-process layer and the agents share this run's secret.
+            os.environ.setdefault("JWT_SECRET", secrets.token_urlsafe(32))
             tmp = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="acl-demo-")))
             policy_copy = copy_policy(tmp)
             relax_judge_timeouts(policy_copy)
