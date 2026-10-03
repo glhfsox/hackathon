@@ -25,9 +25,6 @@ def _policy(**over):
             "strict": {"jev_threshold": 0.4, "checks": {"pii_secrets": {"tool_result": "block"}}},
         },
         "models": {"m": {"upstream_base_url": "http://x/v1"}},
-        "callers": {
-            "demo": {"api_key_env": "DEMO_API_KEY", "role": "dev", "allowed_models": ["m"]}
-        },
         "checks": {"pii_secrets": {"tool_result": "redact", "types": ["email"]}},
         "jev": {"fallback": {"model": "m", "base_url": "http://x/v1"}},
     }

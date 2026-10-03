@@ -78,26 +78,6 @@ def test_profile_switch_changes_pii_mode_at_tool_result(profile: str, expected: 
     assert policy.mode("tool_args", Checkpoint.TOOL_CALL) == Mode.BLOCK
 
 
-def test_caller_for_key_resolves_via_env(policy: Policy, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMO_API_KEY", "k-demo")
-    monkeypatch.setenv("SUPPORT_API_KEY", "k-support")
-    monkeypatch.delenv("PLAYGROUND_API_KEY", raising=False)
-
-    assert policy.caller_for_key("k-demo") == ("demo", policy.callers["demo"])
-    assert policy.caller_for_key("k-support") == ("support", policy.callers["support"])
-    assert policy.caller_for_key("k-unknown") is None
-
-
-def test_caller_for_key_never_matches_empty_env(
-    policy: Policy, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("DEMO_API_KEY", "")
-    monkeypatch.setenv("SUPPORT_API_KEY", "")
-    monkeypatch.delenv("PLAYGROUND_API_KEY", raising=False)
-
-    assert policy.caller_for_key("") is None
-
-
 def test_check_config_splits_modes_from_params(policy: Policy) -> None:
     loop = policy.check_config("loop_detection")
     assert loop.modes == {Checkpoint.INPUT: Mode.BLOCK, Checkpoint.TOOL_RESULT: Mode.BLOCK}
@@ -108,7 +88,14 @@ def test_check_config_splits_modes_from_params(policy: Policy) -> None:
     assert tool_args.modes == {Checkpoint.TOOL_CALL: Mode.BLOCK}
     assert set(tool_args.params) == {"allowed_root", "categories", "max_command_chars"}
 
-    assert policy.check_config("permissions").params == {}
+    permissions = policy.check_config("permissions")
+    assert set(permissions.params) == {"allowed_models", "allowed_tools"}
+    budget = policy.check_config("budget")
+    assert budget.params == {
+        "requests_per_minute": 60,
+        "tokens_per_day": 200000,
+        "cost_per_day": 1.0,
+    }
     unknown = policy.check_config("no_such_check")
     assert unknown.modes == {} and unknown.mode(Checkpoint.INPUT) == Mode.OFF
 
@@ -302,12 +289,10 @@ def test_duplicate_section_in_dev_policy_is_rejected() -> None:
 @pytest.mark.parametrize("spelling", ["off", '"off"', "'off'"])
 def test_off_loads_as_mode_off_quoted_or_not(spelling: str) -> None:
     # YAML 1.1 reads a bare off as the boolean false, which rejected the documented mode spelling.
-    budget = "budget: {input: block, tool_result: block}"
+    budget = "  budget:\n    input: block\n"
     text = POLICY_FILE.read_text()
     assert budget in text
-    policy = parse_policy(
-        text.replace(budget, f"budget: {{input: {spelling}, tool_result: block}}")
-    )
+    policy = parse_policy(text.replace(budget, f"  budget:\n    input: {spelling}\n"))
     assert policy.check_config("budget").modes[Checkpoint.INPUT] == Mode.OFF
 
 

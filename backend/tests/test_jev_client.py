@@ -765,7 +765,7 @@ async def _all_reasons(http, mock, monkeypatch) -> list[str]:
     assert {v.decided_by for v in verdicts} == {"jev", "fallback"}
 
     reasons = [v.reason for v in verdicts]
-    ctx = CheckContext(caller_role="developer", jev_threshold=0.5)
+    ctx = CheckContext(jev_threshold=0.5)
     req = CanonicalRequest(
         request_id="r",
         caller_id="demo",

@@ -30,24 +30,6 @@ from app.observability.sinks import MemoryAuditSink
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 UPSTREAM_URL = "http://localhost:11434/v1/chat/completions"
 MODELS_URL = "http://localhost:11434/v1/models"
-DEMO_KEY = "test-demo-key"
-ORCHESTRATOR_KEY = "test-orchestrator-key"
-AUTH = {"Authorization": f"Bearer {DEMO_KEY}"}
-
-TEST_API_KEYS = {
-    "DEMO_API_KEY": DEMO_KEY,
-    "ORCHESTRATOR_API_KEY": ORCHESTRATOR_KEY,
-    "SUPPORT_API_KEY": "test-support-key",
-    "PLAYGROUND_API_KEY": "test-playground-key",
-}
-
-
-@pytest.fixture(autouse=True)
-def api_keys(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Known caller keys for every test, so key resolution never depends on the developer's env."""
-    for name, value in TEST_API_KEYS.items():
-        monkeypatch.setenv(name, value)
-    return dict(TEST_API_KEYS)
 
 
 @pytest.fixture

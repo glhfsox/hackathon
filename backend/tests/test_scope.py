@@ -80,7 +80,6 @@ async def _run(
         request,
         policy,
         policy.version,
-        policy.callers["demo"],
         ledger=UsageLedger(),
         signatures=FEED,
         judge=judge or FakeJudge(score=0.1),
@@ -419,14 +418,15 @@ async def test_secret_in_argument_key_or_tool_name_never_reaches_reason_or_audit
         messages=[Message(role="user", content="clean up")],
         reply=reply,
     )
-    ctx = CheckContext(caller_role="developer", allowed_models=["gemma4"], allowed_tools=[])
+    ctx = CheckContext()
+    settings = {"allowed_models": ["gemma4"], "allowed_tools": []}
     dumped = ""
     for check_id in ("tool_args", "permissions"):
-        result = await get_check(check_id).run(request, {}, ctx)
+        result = await get_check(check_id).run(request, settings, ctx)
         assert result.verdict == "block"
         dumped += result.model_dump_json()
     model_check = await get_check("permissions").run(
-        request.model_copy(update={"checkpoint": Checkpoint.INPUT}), {}, ctx
+        request.model_copy(update={"checkpoint": Checkpoint.INPUT}), settings, ctx
     )
     dumped += model_check.model_dump_json()
     assert ssn not in dumped and token not in dumped

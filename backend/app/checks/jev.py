@@ -91,10 +91,7 @@ class JevCheck:
         inputs: list[JudgeInput] = []
         for index, text in texts:
             role = "assistant" if index == REPLY_INDEX else request.messages[index].role
-            context = (
-                f"caller role: {ctx.caller_role or 'unknown'}; message role: {role}; "
-                f"offered tools: {tools}"
-            )
+            context = f"message role: {role}; offered tools: {tools}"
             inputs += [
                 JudgeInput(
                     checkpoint=_CAPTURED_AT[role], text=text[i : i + max_chars], context=context

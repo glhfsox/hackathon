@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.observability.sinks import read_jsonl
-from tests.conftest import AUTH, FakeUpstream, completion, wait_until
+from tests.conftest import FakeUpstream, completion, wait_until
 
 USER = [{"role": "user", "content": "What is 2 + 2?"}]
 TOOLS = [
@@ -33,13 +33,9 @@ TOOLS = [
 ZERO_USAGE = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
-def _chat(
-    gateway: TestClient, messages: list[dict[str, Any]], *, key: str = "test-demo-key", **extra: Any
-) -> httpx.Response:
+def _chat(gateway: TestClient, messages: list[dict[str, Any]], **extra: Any) -> httpx.Response:
     return gateway.post(
-        "/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gemma4", "messages": messages, **extra},
+        "/v1/chat/completions", json={"model": "gemma4", "messages": messages, **extra}
     )
 
 
@@ -51,26 +47,26 @@ def _checkpoints(body: dict[str, Any]) -> list[tuple[str, str]]:
     return [(d["checkpoint"], d["action"]) for d in body["control"]["decisions"]]
 
 
-# --- auth and malformed bodies -------------------------------------------------------------
+# --- caller identity and malformed bodies --------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/tools/check"])
-@pytest.mark.parametrize("headers", [{"Authorization": "Bearer not-a-key"}, {}])
-def test_unknown_or_missing_key_is_401_and_audited(
+# API keys are not checked: until caller identity lands, every request is the anonymous caller.
+@pytest.mark.parametrize("headers", [{"Authorization": "Bearer any-key"}, {}])
+def test_any_or_no_key_is_the_anonymous_caller(
     gateway: TestClient,
     upstream: FakeUpstream,
     logs_dir: Path,
-    path: str,
     headers: dict[str, str],
 ) -> None:
-    resp = gateway.post(path, headers=headers, json={"model": "gemma4", "messages": USER})
+    upstream.script(completion("4"))
+    resp = gateway.post(
+        "/v1/chat/completions", headers=headers, json={"model": "gemma4", "messages": USER}
+    )
 
-    assert resp.status_code == 401
-    assert set(resp.json()["error"]) == {"message", "type"}
-    (row,) = _rows(logs_dir, "auth_failed")
-    assert row.action == "block" and row.caller_id is None
-    assert "not-a-key" not in row.reason
-    assert upstream.requests == []
+    assert resp.status_code == 200
+    rows = _rows(logs_dir, "turn_summary")
+    assert rows and {r.caller_id for r in rows} == {"anonymous"}
+    assert "any-key" not in json.dumps([r.model_dump() for r in read_jsonl(logs_dir)])
 
 
 @pytest.mark.parametrize(
@@ -102,13 +98,13 @@ def test_malformed_body_is_400_and_audited(
     gateway: TestClient, upstream: FakeUpstream, logs_dir: Path, body: bytes
 ) -> None:
     resp = gateway.post(
-        "/v1/chat/completions", headers={**AUTH, "content-type": "application/json"}, content=body
+        "/v1/chat/completions", headers={"content-type": "application/json"}, content=body
     )
 
     assert resp.status_code == 400
     assert resp.json()["error"]["type"] == "invalid_request_error"
     (row,) = _rows(logs_dir, "bad_request")
-    assert row.caller_id == "demo" and row.action == "block"
+    assert row.caller_id == "anonymous" and row.action == "block"
     assert upstream.requests == []
 
 
@@ -234,7 +230,7 @@ def test_upstream_failure_becomes_a_refusal_and_is_audited(
     assert body["usage"] == ZERO_USAGE
     assert _checkpoints(body) == [("input", "allow")]
     (row,) = _rows(logs_dir, "upstream_unavailable")
-    assert row.request_id == body["control"]["request_id"] and row.caller_id == "demo"
+    assert row.request_id == body["control"]["request_id"] and row.caller_id == "anonymous"
     assert "123-45-6789" not in row.reason and "123-45-6789" not in content
 
 
@@ -281,8 +277,10 @@ def test_redacted_reply_is_returned_redacted(gateway: TestClient, upstream: Fake
 
 
 def _with_budget(policy_path: Path, budgets: dict[str, Any]) -> None:
+    """Replace the policy's budget limits with `budgets` (a limit left out is unlimited)."""
     raw = yaml.safe_load(policy_path.read_text())
-    raw["callers"]["demo"]["budgets"] = budgets
+    modes = {k: v for k, v in raw["checks"]["budget"].items() if k in ("input", "tool_result")}
+    raw["checks"]["budget"] = {**modes, **budgets}
     policy_path.write_text(yaml.safe_dump(raw))
 
 
@@ -317,50 +315,6 @@ def test_upstream_tokens_count_against_the_token_budget(
     assert second.json()["choices"][0]["message"]["content"] == (
         "Blocked by budget: tokens_per_day exhausted: 18/10"
     )
-
-
-# --- the tool guard ------------------------------------------------------------------------
-
-
-def _guard(gateway: TestClient, name: str, arguments: dict[str, Any], key: str = "test-demo-key"):
-    return gateway.post(
-        "/v1/tools/check",
-        headers={"Authorization": f"Bearer {key}"},
-        json={"tool_call": {"id": "c1", "name": name, "arguments": arguments}, "messages": USER},
-    )
-
-
-def test_tool_guard_allows_a_safe_call(gateway: TestClient) -> None:
-    body = _guard(gateway, "run_shell", {"cmd": "ls"}).json()
-
-    assert body["allowed"] is True
-    assert body["decision"]["checkpoint"] == "tool_call" and body["decision"]["action"] == "allow"
-    assert {r["check"] for r in body["decision"]["results"]} >= {"permissions", "tool_args"}
-
-
-@pytest.mark.parametrize(
-    ("key", "name", "arguments", "blocked_by"),
-    [
-        ("test-demo-key", "run_shell", {"cmd": "rm -rf /"}, "tool_args"),
-        ("test-support-key", "run_shell", {"cmd": "ls"}, "permissions"),
-        ("test-orchestrator-key", "query_customers", {"name": "Anna"}, "permissions"),
-    ],
-    ids=["dangerous-args", "support-may-not-shell", "orchestrator-only-delegates"],
-)
-def test_tool_guard_denies(
-    gateway: TestClient, key: str, name: str, arguments: dict[str, Any], blocked_by: str
-) -> None:
-    body = _guard(gateway, name, arguments, key).json()
-
-    assert body["allowed"] is False
-    assert body["decision"]["action"] == "block" and body["decision"]["blocked_by"] == blocked_by
-
-
-def test_tool_guard_rejects_a_malformed_body(gateway: TestClient, logs_dir: Path) -> None:
-    resp = gateway.post("/v1/tools/check", headers=AUTH, json={"tool_call": {"name": "ls"}})
-
-    assert resp.status_code == 400
-    assert len(_rows(logs_dir, "bad_request")) == 1
 
 
 # --- hot reload, audit, observability ------------------------------------------------------
@@ -419,3 +373,12 @@ def test_health_and_metrics(gateway: TestClient, upstream: FakeUpstream) -> None
     assert metrics["active_profile"] == "balanced"
     assert metrics["totals"]["requests"] == 1 and metrics["totals"]["allowed"] == 1
     assert gateway.get("/api/metrics", params={"since": "yesterday"}).status_code == 422
+
+
+# --- removed endpoints --------------------------------------------------------------------
+
+
+def test_tool_guard_endpoint_is_gone(gateway: TestClient) -> None:
+    resp = gateway.post("/v1/tools/check", json={"tool_call": {"name": "ls"}, "messages": USER})
+
+    assert resp.status_code == 404

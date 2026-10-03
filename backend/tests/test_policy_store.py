@@ -77,8 +77,15 @@ INVALID_EDITS = [
     ),
     (
         "unknown_model",
-        _policy_yaml(_set(["callers", "demo", "allowed_models"], ["gpt-9"])),
-        "callers.demo.allowed_models",
+        _policy_yaml(_set(["checks", "permissions", "allowed_models"], ["gpt-9"])),
+        "checks.permissions.allowed_models",
+    ),
+    # The callers section was removed: an old policy that still has it must not load silently.
+    ("callers_section", _policy_yaml(_set(["callers"], {"demo": {"role": "dev"}})), "callers"),
+    (
+        "negative_budget",
+        _policy_yaml(_set(["checks", "budget", "tokens_per_day"], -1)),
+        "checks.budget.tokens_per_day",
     ),
     ("unknown_profile", _policy_yaml(_set(["active_profile"], "paranoid")), "active_profile"),
     ("jev_latest", _policy_yaml(_set(["jev", "model"], "jev-latest")), "jev.model"),

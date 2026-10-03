@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.openai import OpenAIAdapter
-from app.api import audit, chat, health, metrics, policy, tools
+from app.api import audit, chat, health, metrics, policy
 from app.api.errors import agent_validation_handler
 from app.core.audit_reader import JsonlAuditReader
 from app.core.budget import UsageLedger
@@ -118,7 +118,6 @@ def create_app(
     app.add_exception_handler(RequestValidationError, agent_validation_handler)
     app.include_router(health.router)
     app.include_router(chat.router)
-    app.include_router(tools.router)
     app.include_router(policy.router)
     app.include_router(audit.router)
     app.include_router(metrics.router)

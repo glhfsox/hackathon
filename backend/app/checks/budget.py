@@ -1,6 +1,7 @@
-"""Per-caller budgets: requests per minute, tokens per day, cost per day (docs/architecture.md §4).
+"""Budgets: requests per minute, tokens per day, cost per day (docs/architecture.md §4).
 
-Limits come from the caller's policy budgets via the context; usage comes from the ledger. The
+Limits are the check's own policy parameters (one left out is unlimited); usage comes from the
+ledger, keyed by the request's caller_id. The
 check only reads usage. The proxy records it, so this check never counts the request it judges.
 It runs at `input` and `tool_result`: both are requests the proxy forwards upstream, so a trailing
 tool message must not skip the budget.
@@ -30,9 +31,8 @@ class BudgetCheck:
     ) -> CheckResult:
         started = time.perf_counter()
         limits = {
-            "requests_per_minute": ctx.requests_per_minute,
-            "tokens_per_day": ctx.tokens_per_day,
-            "cost_per_day": ctx.cost_per_day,
+            name: settings.get(name)
+            for name in ("requests_per_minute", "tokens_per_day", "cost_per_day")
         }
         if all(limit is None for limit in limits.values()):
             return make_result(self.id, request, "allow", "no budget limits set", started)

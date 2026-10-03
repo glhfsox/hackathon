@@ -325,7 +325,6 @@ async def test_no_message_content_reaches_langfuse(
         request,
         policy,
         "0.1+test",
-        policy.callers["demo"],
         judge=FakeJudge(score=0.95, reason="instruction override", categories=["prompt_injection"]),
         audit=FanoutAuditSink([memory, sink]),
         checks=[PII, JEV],

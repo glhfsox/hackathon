@@ -88,15 +88,6 @@ def _policy(checks: dict[str, Any], version: str = "t1", price: float = 0.0) -> 
             "active_profile": "balanced",
             "profiles": {"balanced": {"jev_threshold": 0.6}},
             "models": {"m": {"upstream_base_url": "http://x/v1", "price_per_1k_tokens": price}},
-            "callers": {
-                "demo": {
-                    "api_key_env": "DEMO_API_KEY",
-                    "role": "developer",
-                    "allowed_models": ["m"],
-                    "allowed_tools": ["run_shell"],
-                    "budgets": {"requests_per_minute": 5, "tokens_per_day": 100},
-                }
-            },
             "jev": {"fallback": {"model": "m", "base_url": "http://x/v1"}},
         }
     )
@@ -127,7 +118,6 @@ async def _run(checks, modes: dict[str, Any], request=None, audit_sink=None, **k
         request or _request(),
         policy,
         policy.version,
-        policy.callers["demo"],
         audit=audit_sink if audit_sink is not None else MemoryAuditSink(),
         checks=checks,
         **kw,
@@ -639,7 +629,6 @@ async def test_cost_is_computed_from_the_policy_price():
             _session_request(Checkpoint.OUTPUT),
             policy,
             policy.version,
-            policy.callers["demo"],
             audit=sink,
             checks=[FakeCheck("a", 1)],
             **usage_kw,
@@ -660,16 +649,12 @@ async def test_cost_is_computed_from_the_policy_price():
 # --- context ----------------------------------------------------------------------------
 
 
-def test_build_context_from_policy_and_caller():
+def test_build_context_from_policy():
     policy = _policy({})
     ledger = UsageLedger()
     judge = FakeJudge()
     sigs = [Signature(id="s1", pattern=re.compile("x"))]
-    ctx = build_context(policy, policy.callers["demo"], ledger=ledger, signatures=sigs, judge=judge)
-    assert ctx.caller_role == "developer"
-    assert ctx.allowed_models == ["m"]
-    assert ctx.allowed_tools == ["run_shell"]
-    assert (ctx.requests_per_minute, ctx.tokens_per_day, ctx.cost_per_day) == (5, 100, None)
+    ctx = build_context(policy, ledger=ledger, signatures=sigs, judge=judge)
     assert ctx.ledger is ledger
     assert ctx.signatures is sigs
     assert ctx.jev_threshold == 0.6

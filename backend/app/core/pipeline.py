@@ -39,7 +39,7 @@ from app.models import (
     Usage,
     Verdict,
 )
-from app.models.policy import Caller, Policy
+from app.models.policy import Policy
 from app.protocols.audit import AuditSink
 
 logger = logging.getLogger(__name__)
@@ -134,19 +134,12 @@ def _redact_text(text: str, redactions: list[Redaction]) -> str:
 
 def build_context(
     policy: Policy,
-    caller: Caller,
     *,
     ledger: UsageLedger | None,
     signatures: list[Signature] | None,
     judge: Judge | None,
 ) -> CheckContext:
     return CheckContext(
-        caller_role=caller.role,
-        allowed_models=list(caller.allowed_models),
-        allowed_tools=list(caller.allowed_tools),
-        requests_per_minute=caller.budgets.requests_per_minute,
-        tokens_per_day=caller.budgets.tokens_per_day,
-        cost_per_day=caller.budgets.cost_per_day,
         ledger=ledger,
         signatures=signatures,
         jev_threshold=policy.profile.jev_threshold,
@@ -186,7 +179,6 @@ async def run_checkpoint(
     request: CanonicalRequest,
     policy: Policy,
     policy_version: str,
-    caller: Caller,
     *,
     ledger: UsageLedger | None = None,
     signatures: list[Signature] | None = None,
@@ -214,7 +206,7 @@ async def run_checkpoint(
     the reply checkpoint too, so every row of a session gets the same id.
     """
     checkpoint = request.checkpoint
-    ctx = build_context(policy, caller, ledger=ledger, signatures=signatures, judge=judge)
+    ctx = build_context(policy, ledger=ledger, signatures=signatures, judge=judge)
     candidates = ordered_checks() if checks is None else checks
     results: list[CheckResult] = []
     blocked_by: str | None = None
@@ -372,7 +364,7 @@ def _turn_summary(
 class Pipeline:
     """The check pipeline bound to the application's long-lived dependencies.
 
-    The proxy and the tool guard call `run` once per checkpoint with the policy snapshot the
+    The proxy calls `run` once per checkpoint with the policy snapshot the
     request took at its start, so a hot reload never mixes two policy versions in one request.
     """
 
@@ -395,7 +387,6 @@ class Pipeline:
         self,
         request: CanonicalRequest,
         snapshot: PolicySnapshot,
-        caller: Caller,
         *,
         usage: Usage | None = None,
     ) -> tuple[Decision, CanonicalRequest]:
@@ -404,7 +395,6 @@ class Pipeline:
             request,
             snapshot.policy,
             snapshot.version,
-            caller,
             ledger=self._ledger,
             signatures=self._signatures() if self._signatures is not None else None,
             judge=self._judge,

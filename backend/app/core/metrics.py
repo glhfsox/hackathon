@@ -7,7 +7,7 @@ Definitions the numbers rely on:
   one). It never counts in per-check or per-request stats, only under `system_events`.
 - A request is a distinct non-null request_id with at least one check row. Its outcome is the
   strongest action among its check rows (block > redact > flag > allow). A request that only
-  produced system events (e.g. auth failure) shows up under `system_events`, so
+  produced system events (e.g. a malformed body) shows up under `system_events`, so
   `requests == allowed + redacted + blocked + flagged` always holds.
 - Upstream usage is on a request's `turn_summary` row (older logs: on one or several of its reply
   check rows), so tokens and cost are taken once per request, from its row with the most tokens.
@@ -34,13 +34,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.proxy import ANONYMOUS_CALLER
 from app.models import TURN_SUMMARY, Action, AuditRecord, Checkpoint, DecidedBy
 from app.models.policy import Policy
 
 # AuditRecord.check values that are system events, not check results (contracts/models.md).
 SYSTEM_EVENTS = frozenset(
     {
-        "auth_failed",
         "bad_request",
         "upstream_unavailable",
         "policy_loaded",
@@ -189,6 +189,7 @@ def _economics(
     tokens_today: Counter[str],
     cost_today: dict[str, float],
 ) -> dict[str, Any]:
+    budget = policy.check_config("budget").params
     cost_by_model: dict[str, float] = defaultdict(float)
     cost_by_caller: dict[str, float] = defaultdict(float)
     cost_by_day: dict[str, float] = defaultdict(float)
@@ -225,11 +226,10 @@ def _economics(
         },
         "cost_per_turn_avg": _ratio(sum(t.cost for t in turns), len(turns)),
         "budget_utilization": {
-            cid: {
-                "tokens_pct": _pct(tokens_today[cid], caller.budgets.tokens_per_day),
-                "cost_pct": _pct(cost_today[cid], caller.budgets.cost_per_day),
+            ANONYMOUS_CALLER: {
+                "tokens_pct": _pct(tokens_today[ANONYMOUS_CALLER], budget.get("tokens_per_day")),
+                "cost_pct": _pct(cost_today[ANONYMOUS_CALLER], budget.get("cost_per_day")),
             }
-            for cid, caller in policy.callers.items()
         },
         "blocked_before_upstream": blocked_before_upstream,
         "price_per_1k_tokens": {
@@ -315,6 +315,7 @@ def compute_metrics(
         if record.request_id is not None:
             by_turn[record.request_id].append(record)
     turns = [_turn(records) for records in by_turn.values()]
+    budget = policy.check_config("budget").params
 
     return {
         "active_profile": policy.active_profile,
@@ -323,13 +324,12 @@ def compute_metrics(
         "latency_ms_by_check": {c: _p50_p95(v) for c, v in sorted(latencies.items())},
         "overhead_ms": _p50_p95(overhead),
         "budget_by_caller": {
-            cid: {
-                "tokens_today": tokens_today[cid],
-                "tokens_limit": caller.budgets.tokens_per_day or 0,
-                "cost_today": cost_today[cid],
-                "cost_limit": float(caller.budgets.cost_per_day or 0.0),
+            ANONYMOUS_CALLER: {
+                "tokens_today": tokens_today[ANONYMOUS_CALLER],
+                "tokens_limit": budget.get("tokens_per_day") or 0,
+                "cost_today": cost_today[ANONYMOUS_CALLER],
+                "cost_limit": float(budget.get("cost_per_day") or 0.0),
             }
-            for cid, caller in policy.callers.items()
         },
         # Additive fields beyond the contract shape.
         "enabled_checks": {

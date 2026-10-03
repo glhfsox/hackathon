@@ -8,9 +8,7 @@ from app.core.budget import UsageLedger
 from app.models import CanonicalRequest, Checkpoint, Message, ToolCall
 
 
-def _request(
-    caller_id: str = "demo", checkpoint: Checkpoint = Checkpoint.INPUT
-) -> CanonicalRequest:
+def _request(checkpoint: Checkpoint = Checkpoint.INPUT) -> CanonicalRequest:
     messages = [Message(role="user", content="hi")]
     if checkpoint == Checkpoint.TOOL_RESULT:
         # [user, assistant(tool_calls), tool]: what the agent sends after running a tool.
@@ -20,14 +18,14 @@ def _request(
         ]
     return CanonicalRequest(
         request_id="r",
-        caller_id=caller_id,
+        caller_id="anonymous",
         model="gemma4",
         checkpoint=checkpoint,
         messages=messages,
     )
 
 
-def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str = "demo"):
+def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str = "anonymous"):
     # A frozen clock keeps every preloaded request inside the minute window.
     ledger = UsageLedger(clock=lambda: 1_000_000.0)
     for _ in range(requests):
@@ -37,8 +35,9 @@ def _ledger(requests: int = 0, tokens: int = 0, cost: float = 0.0, caller: str =
     return ledger
 
 
-async def _run(ctx: CheckContext, caller_id: str = "demo"):
-    return await CHECK.run(_request(caller_id), {}, ctx)
+async def _run(ledger: UsageLedger | None, **limits: float):
+    """Run the check with `limits` as its policy parameters."""
+    return await CHECK.run(_request(), limits, CheckContext(ledger=ledger))
 
 
 def test_metadata():
@@ -49,13 +48,9 @@ def test_metadata():
 
 
 async def test_exhausted_budget_blocks_at_tool_result():
-    ctx = CheckContext(
-        requests_per_minute=30,
-        tokens_per_day=50000,
-        cost_per_day=0.5,
-        ledger=_ledger(requests=30, tokens=50000, cost=0.5, caller="support"),
-    )
-    result = await CHECK.run(_request("support", Checkpoint.TOOL_RESULT), {}, ctx)
+    limits = {"requests_per_minute": 30, "tokens_per_day": 50000, "cost_per_day": 0.5}
+    ctx = CheckContext(ledger=_ledger(requests=30, tokens=50000, cost=0.5))
+    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), limits, ctx)
     assert result.verdict == "block"
     assert result.checkpoint == Checkpoint.TOOL_RESULT
     assert "requests_per_minute exhausted: 30/30" in result.reason
@@ -64,8 +59,8 @@ async def test_exhausted_budget_blocks_at_tool_result():
 
 
 async def test_within_budget_allows_at_tool_result():
-    ctx = CheckContext(requests_per_minute=30, ledger=_ledger(requests=29, caller="support"))
-    result = await CHECK.run(_request("support", Checkpoint.TOOL_RESULT), {}, ctx)
+    ctx = CheckContext(ledger=_ledger(requests=29))
+    result = await CHECK.run(_request(Checkpoint.TOOL_RESULT), {"requests_per_minute": 30}, ctx)
     assert result.verdict == "allow"
 
 
@@ -75,8 +70,7 @@ async def test_within_budget_allows_at_tool_result():
     ids=["one-under", "at-limit", "one-over"],
 )
 async def test_requests_per_minute_boundaries(used, verdict):
-    ctx = CheckContext(requests_per_minute=3, ledger=_ledger(requests=used))
-    result = await _run(ctx)
+    result = await _run(_ledger(requests=used), requests_per_minute=3)
     assert result.verdict == verdict
     if verdict == "block":
         assert f"requests_per_minute exhausted: {used}/3" in result.reason
@@ -89,8 +83,7 @@ async def test_requests_per_minute_boundaries(used, verdict):
     ids=["one-under", "at-limit", "one-over"],
 )
 async def test_tokens_per_day_boundaries(used, verdict):
-    ctx = CheckContext(tokens_per_day=1000, ledger=_ledger(tokens=used))
-    result = await _run(ctx)
+    result = await _run(_ledger(tokens=used), tokens_per_day=1000)
     assert result.verdict == verdict
     if verdict == "block":
         assert f"tokens_per_day exhausted: {used}/1000" in result.reason
@@ -102,8 +95,7 @@ async def test_tokens_per_day_boundaries(used, verdict):
     ids=["one-under", "at-limit", "one-over"],
 )
 async def test_cost_per_day_boundaries(used, verdict):
-    ctx = CheckContext(cost_per_day=1.0, ledger=_ledger(cost=used))
-    result = await _run(ctx)
+    result = await _run(_ledger(cost=used), cost_per_day=1.0)
     assert result.verdict == verdict
     if verdict == "block":
         assert f"cost_per_day exhausted: {used}/1.0" in result.reason
@@ -111,52 +103,40 @@ async def test_cost_per_day_boundaries(used, verdict):
 
 async def test_unlimited_allows_without_touching_ledger():
     ledger = Mock(spec=UsageLedger)
-    result = await _run(CheckContext(ledger=ledger))
+    result = await _run(ledger)
     assert result.verdict == "allow"
     assert result.score == 0.0
     assert ledger.method_calls == []
 
 
 async def test_unlimited_allows_without_ledger():
-    assert (await _run(CheckContext(ledger=None))).verdict == "allow"
+    assert (await _run(None)).verdict == "allow"
 
 
 async def test_missing_ledger_with_a_limit_fails_closed():
-    result = await _run(CheckContext(tokens_per_day=10, ledger=None))
+    result = await _run(None, tokens_per_day=10)
     assert result.verdict == "error"
     assert "ledger" in result.reason
 
 
 async def test_unset_limit_is_ignored_even_when_usage_is_high():
     # Only tokens are limited, so a flood of requests and spend must not block.
-    ctx = CheckContext(tokens_per_day=1000, ledger=_ledger(requests=500, tokens=10, cost=99.0))
-    assert (await _run(ctx)).verdict == "allow"
+    ledger = _ledger(requests=500, tokens=10, cost=99.0)
+    assert (await _run(ledger, tokens_per_day=1000)).verdict == "allow"
 
 
 async def test_reason_names_every_exhausted_budget():
-    ctx = CheckContext(
-        requests_per_minute=2,
-        tokens_per_day=100,
-        cost_per_day=5.0,
-        ledger=_ledger(requests=2, tokens=100, cost=1.0),
-    )
-    result = await _run(ctx)
+    ledger = _ledger(requests=2, tokens=100, cost=1.0)
+    result = await _run(ledger, requests_per_minute=2, tokens_per_day=100, cost_per_day=5.0)
     assert result.verdict == "block"
     assert "requests_per_minute exhausted: 2/2" in result.reason
     assert "tokens_per_day exhausted: 100/100" in result.reason
     assert "cost_per_day" not in result.reason
 
 
-async def test_usage_is_read_for_the_request_caller_only():
-    ctx = CheckContext(requests_per_minute=1, ledger=_ledger(requests=5, caller="other"))
-    assert (await _run(ctx, caller_id="demo")).verdict == "allow"
-    assert (await _run(ctx, caller_id="other")).verdict == "block"
-
-
 async def test_check_does_not_record_usage():
     ledger = _ledger()
-    ctx = CheckContext(requests_per_minute=10, tokens_per_day=10, cost_per_day=1.0, ledger=ledger)
     for _ in range(3):
-        await _run(ctx)
-    assert ledger.requests_last_minute("demo") == 0
-    assert ledger.tokens_today("demo") == 0
+        await _run(ledger, requests_per_minute=10, tokens_per_day=10, cost_per_day=1.0)
+    assert ledger.requests_last_minute("anonymous") == 0
+    assert ledger.tokens_today("anonymous") == 0

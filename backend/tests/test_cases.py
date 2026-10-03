@@ -20,6 +20,7 @@ import app.checks
 from app.checks.base import Check, Signature
 from app.core.budget import UsageLedger
 from app.core.pipeline import run_checkpoint
+from app.core.proxy import ANONYMOUS_CALLER
 from app.models import Action, CanonicalRequest, Checkpoint, Message, ToolDef
 from app.models.policy import Policy
 from app.observability.sinks import MemoryAuditSink
@@ -67,7 +68,6 @@ class JudgeSpec(_Strict):
 class Case(_Strict):
     name: str
     checkpoint: Checkpoint
-    caller: str = "demo"
     model: str = "gemma4"
     messages: list[Message]
     tools: list[ToolDef] = Field(default_factory=list)
@@ -152,7 +152,7 @@ async def test_case(raw: dict[str, Any]) -> None:
     policy = Policy.model_validate(_deep_merge(BASE_POLICY, case.policy_patch))
     request = CanonicalRequest(
         request_id=f"case-{case.name}",
-        caller_id=case.caller,
+        caller_id=ANONYMOUS_CALLER,
         model=case.model,
         checkpoint=case.checkpoint,
         messages=case.messages,
@@ -169,8 +169,7 @@ async def test_case(raw: dict[str, Any]) -> None:
         request,
         policy,
         policy.version,
-        policy.callers[case.caller],
-        ledger=_ledger(case.caller, case.usage),
+        ledger=_ledger(ANONYMOUS_CALLER, case.usage),
         signatures=_load_signatures(policy),
         judge=judge,
         audit=MemoryAuditSink(),

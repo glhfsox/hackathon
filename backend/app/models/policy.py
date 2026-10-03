@@ -9,7 +9,6 @@ owner extends them; the store does not change.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
@@ -42,6 +41,7 @@ _Limit = Annotated[int, Field(ge=0)]
 _Size = Annotated[int, Field(gt=0)]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 _Roles = list[Literal["system", "user", "assistant", "tool"]]
+_Cost = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 class _ExtraPattern(_Strict):
@@ -74,8 +74,11 @@ _IN, _CALL, _RESULT, _OUT = (
 # Only jev takes timeout_s (the pipeline applies it): the rule checks are synchronous CPU work that
 # a timeout could not interrupt, so a timeout_s there would only pretend to bound them.
 CHECK_SPECS: dict[str, CheckSpec] = {
-    "permissions": _spec({_IN, _CALL, _RESULT}),
-    "budget": _spec({_IN, _RESULT}),
+    "permissions": _spec({_IN, _CALL, _RESULT}, allowed_models=list[str], allowed_tools=list[str]),
+    # A limit left out is unlimited.
+    "budget": _spec(
+        {_IN, _RESULT}, requests_per_minute=_Limit, tokens_per_day=_Limit, cost_per_day=_Cost
+    ),
     "loop_detection": _spec({_IN, _RESULT}, max_tool_calls=_Limit, max_repeats=_Limit),
     "signatures": _spec({_IN, _CALL, _RESULT}, categories=list[str], skip_roles=_Roles),
     "tool_args": _spec({_CALL}, allowed_root=_Text, categories=list[str], max_command_chars=_Size),
@@ -146,14 +149,6 @@ class Profile(_Strict):
     checks: dict[str, dict[Checkpoint, Mode]] = Field(default_factory=dict)
 
 
-class Budgets(_Strict):
-    """Per-caller limits. None means unlimited."""
-
-    requests_per_minute: int | None = Field(default=None, ge=0)
-    tokens_per_day: int | None = Field(default=None, ge=0)
-    cost_per_day: float | None = Field(default=None, ge=0)
-
-
 class SignatureFeedConfig(_Strict):
     """Where the externally managed attack-signature feed lives: a file path or an http(s) URL."""
 
@@ -167,14 +162,6 @@ class ModelConfig(_Strict):
     price_per_1k_tokens: float = 0.0
     # Seconds to wait for the upstream reply; a local model can take tens of seconds.
     timeout_s: float = Field(default=120.0, gt=0)
-
-
-class Caller(_Strict):
-    api_key_env: str
-    role: str
-    allowed_models: list[str] = Field(default_factory=list)
-    allowed_tools: list[str] = Field(default_factory=list)
-    budgets: Budgets = Field(default_factory=Budgets)
 
 
 class CheckSection(BaseModel):
@@ -222,7 +209,6 @@ class Policy(_Strict):
     active_profile: str
     profiles: dict[str, Profile]
     models: dict[str, ModelConfig]
-    callers: dict[str, Caller]
     checks: dict[str, CheckSection] = Field(default_factory=dict)
     signatures: SignatureFeedConfig | None = None
     jev: JevConfig
@@ -238,10 +224,12 @@ class Policy(_Strict):
 
         if self.active_profile not in self.profiles:
             add(("active_profile",), "profile is not defined in profiles", self.active_profile)
-        for cid, caller in self.callers.items():
-            for i, m in enumerate(caller.allowed_models):
+        allowed_models = self.check_config("permissions").params.get("allowed_models", [])
+        if isinstance(allowed_models, list):  # a wrong type is reported by _check_section
+            for i, m in enumerate(allowed_models):
                 if m not in self.models:
-                    add(("callers", cid, "allowed_models", i), "model is not defined in models", m)
+                    loc = ("checks", "permissions", "allowed_models", i)
+                    add(loc, "model is not defined in models", m)
         for cid, section in self.checks.items():
             _check_section(("checks", cid), cid, section.modes, section.params, add)
         for name, profile in self.profiles.items():
@@ -311,11 +299,3 @@ class Policy(_Strict):
     def _mode_in(self, profile: Profile, check_id: str, checkpoint: Checkpoint) -> Mode:
         override = profile.checks.get(check_id, {}).get(checkpoint)
         return override if override is not None else self.check_config(check_id).mode(checkpoint)
-
-    def caller_for_key(self, api_key: str) -> tuple[str, Caller] | None:
-        """Resolve a bearer key to (caller_id, Caller) via env vars. An empty env never matches."""
-        for cid, caller in self.callers.items():
-            expected = os.environ.get(caller.api_key_env, "")
-            if expected and expected == api_key:
-                return cid, caller
-        return None
