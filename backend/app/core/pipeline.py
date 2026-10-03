@@ -22,11 +22,11 @@ from app.checks.base import (
     Signature,
     make_result,
 )
-from app.core.budget import UsageLedger
 from app.models import (
     TURN_SUMMARY,
     Action,
     AuditRecord,
+    Caller,
     CanonicalRequest,
     Checkpoint,
     CheckResult,
@@ -39,7 +39,7 @@ from app.models import (
     Usage,
     Verdict,
 )
-from app.models.policy import Caller, Policy
+from app.models.policy import Policy
 from app.protocols.audit import AuditSink
 
 logger = logging.getLogger(__name__)
@@ -136,18 +136,12 @@ def build_context(
     policy: Policy,
     caller: Caller,
     *,
-    ledger: UsageLedger | None,
     signatures: list[Signature] | None,
     judge: Judge | None,
 ) -> CheckContext:
     return CheckContext(
         caller_role=caller.role,
-        allowed_models=list(caller.allowed_models),
         allowed_tools=list(caller.allowed_tools),
-        requests_per_minute=caller.budgets.requests_per_minute,
-        tokens_per_day=caller.budgets.tokens_per_day,
-        cost_per_day=caller.budgets.cost_per_day,
-        ledger=ledger,
         signatures=signatures,
         jev_threshold=policy.profile.jev_threshold,
         judge=judge,
@@ -188,7 +182,6 @@ async def run_checkpoint(
     policy_version: str,
     caller: Caller,
     *,
-    ledger: UsageLedger | None = None,
     signatures: list[Signature] | None = None,
     judge: Judge | None = None,
     audit: AuditSink,
@@ -214,7 +207,7 @@ async def run_checkpoint(
     the reply checkpoint too, so every row of a session gets the same id.
     """
     checkpoint = request.checkpoint
-    ctx = build_context(policy, caller, ledger=ledger, signatures=signatures, judge=judge)
+    ctx = build_context(policy, caller, signatures=signatures, judge=judge)
     candidates = ordered_checks() if checks is None else checks
     results: list[CheckResult] = []
     blocked_by: str | None = None
@@ -380,13 +373,11 @@ class Pipeline:
         self,
         *,
         audit: AuditSink,
-        ledger: UsageLedger | None = None,
         signatures: Callable[[], list[Signature] | None] | None = None,
         judge: Judge | None = None,
         checks: list[Check] | None = None,
     ) -> None:
         self._audit = audit
-        self._ledger = ledger
         self._signatures = signatures
         self._judge = judge
         self._checks = checks
@@ -405,7 +396,6 @@ class Pipeline:
             snapshot.policy,
             snapshot.version,
             caller,
-            ledger=self._ledger,
             signatures=self._signatures() if self._signatures is not None else None,
             judge=self._judge,
             audit=self._audit,

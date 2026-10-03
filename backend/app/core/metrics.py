@@ -113,11 +113,6 @@ def _ratio(part: float, whole: float) -> float:
     return part / whole if whole else 0.0
 
 
-def _pct(used: float, limit: float | None) -> float | None:
-    # None (no limit) or 0 (nothing allowed) has no meaningful utilisation.
-    return 100.0 * used / limit if limit else None
-
-
 @dataclass
 class _Turn:
     """One request (agent step), from its turn_summary rows."""
@@ -224,13 +219,6 @@ def _economics(
             "avg": _ratio(sum(per_session), len(per_session)),
         },
         "cost_per_turn_avg": _ratio(sum(t.cost for t in turns), len(turns)),
-        "budget_utilization": {
-            cid: {
-                "tokens_pct": _pct(tokens_today[cid], caller.budgets.tokens_per_day),
-                "cost_pct": _pct(cost_today[cid], caller.budgets.cost_per_day),
-            }
-            for cid, caller in policy.callers.items()
-        },
         "blocked_before_upstream": blocked_before_upstream,
         "price_per_1k_tokens": {
             m: cfg.price_per_1k_tokens for m, cfg in sorted(policy.models.items())
@@ -322,14 +310,15 @@ def compute_metrics(
         "blocks_by_check": _sorted_counts(blocks_by_check),
         "latency_ms_by_check": {c: _p50_p95(v) for c, v in sorted(latencies.items())},
         "overhead_ms": _p50_p95(overhead),
+        # No budgets exist any more: today's usage per user, with limit 0 meaning unlimited.
         "budget_by_caller": {
             cid: {
                 "tokens_today": tokens_today[cid],
-                "tokens_limit": caller.budgets.tokens_per_day or 0,
+                "tokens_limit": 0,
                 "cost_today": cost_today[cid],
-                "cost_limit": float(caller.budgets.cost_per_day or 0.0),
+                "cost_limit": 0.0,
             }
-            for cid, caller in policy.callers.items()
+            for cid in sorted(tokens_today.keys() | cost_today.keys())
         },
         # Additive fields beyond the contract shape.
         "enabled_checks": {

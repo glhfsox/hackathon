@@ -54,7 +54,7 @@ profiles:
 
 # MODELS callers may request. The key is the `model` name in the request.
 #   upstream_base_url    any OpenAI-compatible endpoint the request is forwarded to
-#   price_per_1k_tokens  used for cost estimates and cost budgets (local models cost 0)
+#   price_per_1k_tokens  used for the cost shown in the audit log (local models cost 0)
 #   timeout_s            seconds to wait for the upstream reply (default 120); after it the
 #                        agent gets a refusal `upstream_unavailable`
 models:
@@ -63,38 +63,23 @@ models:
     price_per_1k_tokens: 0.0
     timeout_s: 120
 
-# CALLERS: who may use the layer. The key is the caller id shown in the audit log.
-#   api_key_env     NAME of the env var holding this caller's API key (Bearer token). An unset or
-#                   empty env var never matches, so that caller is simply disabled.
-#   role            free-form label shown in the audit log and dashboard
-#   allowed_models  must name models listed under `models`
-#   allowed_tools   tools this caller's agent may call; anything else is blocked
-#   budgets         requests_per_minute, tokens_per_day, cost_per_day; leave one out for no limit
-callers:
-  demo:                       # the demo worker agent (backend/demo)
-    api_key_env: DEMO_API_KEY
-    role: developer
-    allowed_models: [gemma4]
-    allowed_tools: [query_customers, run_shell, read_file, http_get]
-    budgets: {requests_per_minute: 60, tokens_per_day: 200000, cost_per_day: 1.0}
-  orchestrator:               # the demo orchestrator: it may only hand tasks to the worker
-    api_key_env: ORCHESTRATOR_API_KEY
-    role: orchestrator
-    allowed_models: [gemma4]
-    allowed_tools: [delegate]
-    budgets: {requests_per_minute: 30, tokens_per_day: 100000, cost_per_day: 0.5}
-  support:
-    api_key_env: SUPPORT_API_KEY
-    role: support
-    allowed_models: [gemma4]
-    allowed_tools: [query_customers]
-    budgets: {requests_per_minute: 30, tokens_per_day: 50000, cost_per_day: 0.5}
-  playground:
-    api_key_env: PLAYGROUND_API_KEY
-    role: developer
-    allowed_models: [gemma4]
-    allowed_tools: [query_customers, run_shell]
-    budgets: {requests_per_minute: 60, tokens_per_day: 200000, cost_per_day: 1.0}
+# PERMISSIONS and ROLES: who may use which tool (RBAC, deny by default).
+#   permissions  permission name -> the tools it grants
+#   roles        role name -> the permissions it holds
+#   A user's allowed tools are the union over the permissions of all their roles. A tool listed
+#   in no permission is allowed to nobody. A role that names an undefined permission is an error.
+#   Users are not listed here: their name and roles come from the signed token.
+permissions:
+  customers.read: [query_customers]
+  files.read:     [read_file]
+  web.read:       [http_get]
+  shell.exec:     [run_shell]
+  tasks.delegate: [delegate]
+
+roles:
+  support:      [customers.read]
+  developer:    [customers.read, files.read, web.read, shell.exec]
+  orchestrator: [tasks.delegate]
 
 # CHECKS: one section per check. Inside a section, the checkpoint keys (input, tool_call,
 # tool_result, output) are MODES; every other key is a PARAMETER handed to that check. A check
@@ -102,13 +87,10 @@ callers:
 # rule checks are fast synchronous code that a timeout could not interrupt.
 # A policy may turn checks off; its `policy_loaded` audit row then names every check that is off.
 checks:
-  # Caller may use the requested model (every request to the model: input and tool_result) and
-  # the tools the model asks for (tool_call).
-  permissions: {input: block, tool_call: block, tool_result: block}
-
-  # The caller's budgets (see `callers`), checked on every request to the model: input and
-  # tool_result.
-  budget: {input: block, tool_result: block}
+  # The tools the model asks for must be allowed to the user's roles (see `roles`). The agent's
+  # tools list is already filtered and a denied call already replaced before this check runs, so
+  # it is the last line of defence for the tool guard.
+  permissions: {tool_call: block}
 
   # Runaway agents, counted per agent turn (tool calls since the last user message): more than
   # max_tool_calls tool calls, or the same tool with identical arguments more than max_repeats times.

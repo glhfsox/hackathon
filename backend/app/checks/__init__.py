@@ -11,7 +11,6 @@ from app.checks.base import Check
 
 _MODULES = (
     "permissions",
-    "budget",
     "loop_detection",
     "signatures",
     "tool_args",

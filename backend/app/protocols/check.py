@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.core.budget import UsageLedger
 from app.models import CanonicalRequest, Checkpoint, CheckResult
 from app.protocols.judge import Judge
 
@@ -31,12 +30,7 @@ class CheckContext:
     """
 
     caller_role: str = ""
-    allowed_models: list[str] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
-    requests_per_minute: int | None = None
-    tokens_per_day: int | None = None
-    cost_per_day: float | None = None
-    ledger: UsageLedger | None = None
     # None means the feed never loaded: the signatures check must report an error, not allow.
     signatures: list[Signature] | None = None
     jev_threshold: float = 1.0

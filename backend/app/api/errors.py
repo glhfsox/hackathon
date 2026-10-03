@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.proxy import UnauthorizedError
-from app.deps import get_api_key, get_proxy_service
+from app.deps import get_proxy_service, get_token
 from app.models import PolicyError
 from app.protocols.adapter import InvalidRequestError
 from app.schemas.error_detail import ErrorDetail
@@ -59,7 +59,7 @@ async def agent_validation_handler(request: Request, exc: Exception) -> JSONResp
         return await request_validation_exception_handler(request, exc)
     service = get_proxy_service(request)
     try:
-        await service.reject_body(describe_errors(exc.errors()), api_key=get_api_key(request))
+        await service.reject_body(describe_errors(exc.errors()), token=get_token(request))
     except UnauthorizedError as unknown:
         return unauthorized(unknown)
     except InvalidRequestError as invalid:

@@ -13,7 +13,7 @@ from app.adapters.openai import OpenAIAdapter
 from app.api import audit, chat, health, metrics, policy, tools
 from app.api.errors import agent_validation_handler
 from app.core.audit_reader import JsonlAuditReader
-from app.core.budget import UsageLedger
+from app.core.auth import JwtAuthenticator, secret_from_env
 from app.core.jev import JevClient
 from app.core.pipeline import Pipeline
 from app.core.policy_store import PolicyStore
@@ -58,20 +58,26 @@ def _real_app(
                 # An invalid policy at startup raises: the layer does not run without a policy.
                 await store.load_initial()
                 feed = SignatureFeed()
-                ledger = UsageLedger()
                 # One long-lived client, so health() state and the verdict cache survive
                 # requests; it reads the jev section in force on every call.
                 jev = JevClient(lambda: store.current().policy.jev, http)
                 upstream = HttpUpstream(http)
-                pipeline = Pipeline(
-                    audit=audit_sink, ledger=ledger, signatures=feed.current, judge=jev
-                )
+                pipeline = Pipeline(audit=audit_sink, signatures=feed.current, judge=jev)
                 app.state.policy_provider = store
                 app.state.upstream = upstream
                 app.state.judge = jev
                 app.state.audit_reader = JsonlAuditReader(logs)
+                # Raises when JWT_SECRET is unset: the layer does not run without a way to
+                # verify tokens.
+                authenticator = JwtAuthenticator(secret_from_env())
                 app.state.proxy_service = ProxyService(
-                    OpenAIAdapter(), pipeline, upstream, store, ledger, audit_sink, feed
+                    OpenAIAdapter(),
+                    pipeline,
+                    upstream,
+                    store,
+                    audit_sink,
+                    authenticator,
+                    feed,
                 )
                 exporter = StatsExporter(logs, lambda: store.current().policy)
                 store.start()

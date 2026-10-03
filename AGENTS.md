@@ -15,27 +15,26 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
 
-- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
+- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and sends a signed JWT as its bearer token, and is protected with no other code changes. The user and their roles come from the token, and the policy maps roles to tools (see architecture §11). A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
 - **Universal adapter:** every request is translated into one canonical internal model, and checks never see vendor JSON. Only the OpenAI adapter is built. Other formats are "one more adapter" by design.
 - **Checks:** all checks share one interface. They receive the canonical request plus their policy settings and return `allow | redact | block | flag` with a score, reason and latency. They run cheap before expensive and stop at the first block.
   - Rule checks:
     - PII and secrets redaction
-    - API-key permissions (allowed models and tools)
+    - role-based tool permissions: tools the user's roles do not allow are hidden from the model, and denied tool calls are replaced by a notice
     - tool-argument validation (shell, destructive SQL, path traversal, unsafe deserialization)
     - an external attack-signature feed
-    - budgets (tokens, cost, rate)
     - loop detection
   - AI check: Jev (prompt injection, hidden instructions in tool results, overall risk score).
-- **Policy:** controls which checks are on, the action per checkpoint (`off | monitor | redact | block`), thresholds, profiles (`strict | balanced | permissive`), models, callers and budgets.
+- **Policy:** controls which checks are on, the action per checkpoint (`off | monitor | redact | block`), thresholds, profiles (`strict | balanced | permissive`), models, and which roles may use which tools.
 - **Blocked requests** return a normal OpenAI-format refusal with the reason, so agents don't crash.
 - **Reporting:**
   - The append-only audit log stores every decision with its reason, latency and cost, and it is exportable.
-  - The dashboard shows security posture, blocked threats, budget use and overhead. It also has a policy editor and a chat playground that shows which checks fired.
+  - The dashboard shows security posture, blocked threats, usage per user and overhead. It also has a policy editor and a chat playground that shows which checks fired.
 - **Tests:** data-driven YAML cases, run with one command. Every check has at least one allowed and one blocked case.
 - **Scope:**
   - We build: the layer, one tiny demo agent (a fake customer DB with PII, plus a shell/code tool), the dashboard and the tests.
-  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond API keys.
+  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond verifying signed tokens.
 
 ## 3. Stack
 
@@ -139,3 +138,7 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — AuditRecord gained optional agent/economic fields and a `turn_summary` row per checkpoint (`contracts/models.md`); tokens and cost live only on that row. Free metrics for judges come from `logs/*.jsonl` (Power BI); Langfuse is self-hosted and optional, for the presentation only. (Artem)
 - 2026-10-03 — Policy validation rejects unknown check ids, checkpoints a check never runs at, unknown or mistyped params, and `jev` enabled where `pii_secrets` is off. Provisional schema lives in `backend/app/policy.py`; `backend/policy.yaml` is the documented example. (Artem)
 - 2026-10-03 — Demo: two agents on the bare OpenAI client (worker with Python tools behind the tool guard, orchestrator that delegates via a `delegate` tool call), in `backend/demo/`, with a local stand-in gateway until the real proxy lands; the proxy calls `app.pipeline.run_checkpoint`. (Artem)
+- 2026-10-03 — Identity is a signed JWT (HS256 only, `sub`, `roles`, `exp` required, secret in the `JWT_SECRET` env var), replacing API keys and the policy `callers` section. Any failure is 401 and an `auth_failed` audit row. (Oleh)
+- 2026-10-03 — Tool access is role-based: policy `permissions` (permission → tools) and `roles` (role → permissions), deny by default. Inbound the model is not shown forbidden tools, outbound a forbidden tool call is replaced by a text notice, and every tool decision is an `rbac` audit row (architecture §11). OpenAI format only. (Oleh)
+- 2026-10-03 — Dropped: budgets, per-caller model lists, the `budget` check and the usage ledger (they need shared storage). Cost reporting stays. `permissions` now runs only at `tool_call`; this supersedes the entry that put `permissions` (model) and `budget` at `tool_result`. (Oleh)
+- 2026-10-03 — OPEN: how the playground and the demo agents obtain a token (the layer has no token endpoint). The tool guard may be removed. Tests and the demo agents still assume API keys and need migrating. (Oleh)
