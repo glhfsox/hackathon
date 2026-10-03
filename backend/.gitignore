@@ -1,0 +1,141 @@
+# Full upstream template: https://github.com/github/gitignore/blob/main/Python.gitignore
+
+# ---------------------------------------------------------------------------
+# SECRETS — most important block. A committed key must be rotated.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+secrets/
+
+# ---------------------------------------------------------------------------
+# Byte-compiled / optimized / DLL files
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# ---------------------------------------------------------------------------
+# Distribution / packaging
+# ---------------------------------------------------------------------------
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------------------------------------------------------------------------
+# Virtual environments
+#
+# NOTE: .venv/ contains platform-specific compiled binaries and absolute paths.
+# It is never portable. It must stay out of git AND out of the Docker image.
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ---------------------------------------------------------------------------
+# uv
+#
+# uv.lock SHOULD be committed for applications — it is what makes your machine,
+# CI and the Docker image resolve to identical package versions.
+# Deliberately NOT ignored here.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Testing / coverage
+# ---------------------------------------------------------------------------
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# ---------------------------------------------------------------------------
+# Type checkers and linters
+# ---------------------------------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------------------------------------------------------------------------
+# Databases / local data
+# ---------------------------------------------------------------------------
+*.sqlite3
+*.sqlite3-journal
+*.db
+pgdata/
+docker/data/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Documentation builds
+# ---------------------------------------------------------------------------
+docs/_build/
+/site
+
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+# Claude Code local state
+.claude/
+
+# Ad-hoc scratch work that should never reach the shared repo
+scratch/
+*.local.*
