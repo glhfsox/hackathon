@@ -5,6 +5,7 @@ from app.models.enums import Action, Checkpoint, DecidedBy, Mode
 from app.models.judge_input import JudgeInput
 from app.models.judge_verdict import JudgeVerdict
 from app.models.message import Message
+from app.models.policy_error import PolicyError
 from app.models.policy_snapshot import PolicySnapshot
 from app.models.redaction import Redaction
 from app.models.tool_call import ToolCall
@@ -21,6 +22,7 @@ __all__ = [
     "JudgeVerdict",
     "Message",
     "Mode",
+    "PolicyError",
     "PolicySnapshot",
     "Redaction",
     "ToolCall",
