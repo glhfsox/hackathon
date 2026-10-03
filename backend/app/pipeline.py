@@ -1,0 +1,367 @@
+"""Check pipeline: runs the checks for one checkpoint and maps verdicts to actions.
+
+docs/architecture.md §3 (checkpoint detection) and §4 (mode table, cost order, first block stops).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import time
+from datetime import UTC, datetime
+from typing import Any
+
+from app.audit import AuditSink
+from app.budget import UsageLedger
+from app.checks import ordered_checks
+from app.checks.base import (
+    REPLY_INDEX,
+    Check,
+    CheckContext,
+    Judge,
+    Signature,
+    make_result,
+)
+from app.models import (
+    TURN_SUMMARY,
+    Action,
+    AuditRecord,
+    CanonicalRequest,
+    Checkpoint,
+    CheckResult,
+    DecidedBy,
+    Decision,
+    Message,
+    Mode,
+    Redaction,
+    Usage,
+    Verdict,
+)
+from app.policy import Caller, Policy
+
+logger = logging.getLogger(__name__)
+
+# Used when a check's policy section sets no timeout_s.
+DEFAULT_TIMEOUT_S = 10.0
+
+_STRENGTH = {Action.allow: 0, Action.flag: 1, Action.redact: 2, Action.block: 3}
+# Usage is only known once the upstream has answered, i.e. on the reply checkpoints.
+_USAGE_CHECKPOINTS = {Checkpoint.tool_call, Checkpoint.output}
+_PAST = {Action.block: "blocked", Action.redact: "redacted", Action.flag: "flagged"}
+# Hex digits of the conversation hash: 64 bits, so distinct sessions practically never collide.
+_CONVERSATION_ID_LEN = 16
+
+
+def conversation_id(caller_id: str, messages: list[Message]) -> str:
+    """A stable id for one agent session, from the caller and its first user message.
+
+    The agent re-sends the whole conversation on every step, so every step of a session yields
+    the same id without any help from the client. Limitation: two sessions of one caller that
+    start with the same first user message get the same id and are counted as one session.
+    """
+    first = next((m.content or "" for m in messages if m.role == "user"), "")
+    digest = hashlib.sha256(f"{caller_id}\0{first}".encode()).hexdigest()
+    return digest[:_CONVERSATION_ID_LEN]
+
+
+def detect_request_checkpoint(messages: list[Message]) -> Checkpoint:
+    if messages and messages[-1].role == "tool":
+        return Checkpoint.tool_result
+    return Checkpoint.input
+
+
+def detect_reply_checkpoint(reply: Message) -> Checkpoint:
+    return Checkpoint.tool_call if reply.tool_calls else Checkpoint.output
+
+
+def apply_mode(verdict: Verdict, mode: Mode) -> Action:
+    """The mode table of docs/architecture.md §4. Errors fail closed outside monitor mode."""
+    if mode == Mode.off:
+        raise ValueError("mode 'off' is never applied: the pipeline skips the check")
+    if verdict == "allow":
+        return Action.allow
+    if mode == Mode.monitor:
+        return Action.flag
+    # In block mode a finding stops the request even when it could be redacted: that is what
+    # makes `strict` stricter than `balanced` for PII.
+    return Action.redact if verdict == "redact" and mode == Mode.redact else Action.block
+
+
+def apply_redactions(request: CanonicalRequest, redactions: list[Redaction]) -> CanonicalRequest:
+    """Return a deep copy with the redactions applied. The original request is not modified.
+
+    Offsets point into the original content, so spans are applied right to left. Overlapping
+    spans are merged first: applying them one by one would cut into an earlier replacement or
+    leave part of the secret behind.
+    """
+    out = request.model_copy(deep=True)
+    by_index: dict[int, list[Redaction]] = {}
+    for r in redactions:
+        by_index.setdefault(r.message_index, []).append(r)
+    for index, group in by_index.items():
+        if index == REPLY_INDEX:
+            target = out.reply
+        elif 0 <= index < len(out.messages):
+            target = out.messages[index]
+        else:
+            target = None
+        if target is None or target.content is None:
+            raise ValueError(f"redaction points at message {index}, which has no content")
+        target.content = _redact_text(target.content, group)
+    return out
+
+
+def _redact_text(text: str, redactions: list[Redaction]) -> str:
+    # Merge overlapping spans into (start, end, [replacements]) so no original byte survives.
+    merged: list[tuple[int, int, list[str]]] = []
+    for r in sorted(redactions, key=lambda r: (r.start, r.end)):
+        if not 0 <= r.start <= r.end <= len(text):
+            raise ValueError(f"redaction span {r.start}:{r.end} is outside a text of {len(text)}")
+        if merged and r.start < merged[-1][1]:
+            start, end, reps = merged[-1]
+            if r.replacement not in reps:
+                reps.append(r.replacement)
+            merged[-1] = (start, max(end, r.end), reps)
+        else:
+            merged.append((r.start, r.end, [r.replacement]))
+    for start, end, reps in reversed(merged):
+        text = text[:start] + "".join(reps) + text[end:]
+    return text
+
+
+def build_context(
+    policy: Policy,
+    caller: Caller,
+    *,
+    ledger: UsageLedger | None,
+    signatures: list[Signature] | None,
+    judge: Judge | None,
+) -> CheckContext:
+    return CheckContext(
+        caller_role=caller.role,
+        allowed_models=list(caller.allowed_models),
+        allowed_tools=list(caller.allowed_tools),
+        requests_per_minute=caller.budgets.requests_per_minute,
+        tokens_per_day=caller.budgets.tokens_per_day,
+        cost_per_day=caller.budgets.cost_per_day,
+        ledger=ledger,
+        signatures=signatures,
+        jev_threshold=policy.profile.jev_threshold,
+        judge=judge,
+    )
+
+
+async def _run_check(
+    check: Check, request: CanonicalRequest, settings: dict[str, Any], ctx: CheckContext
+) -> CheckResult:
+    """Run one check; an exception or a timeout becomes verdict `error` (fail closed by mode)."""
+    started = time.perf_counter()
+    timeout_s = settings.get("timeout_s", DEFAULT_TIMEOUT_S)
+    try:
+        return await asyncio.wait_for(check.run(request, settings, ctx), timeout_s)
+    except TimeoutError:
+        logger.warning(
+            "check %s timed out after %ss (request %s, checkpoint %s)",
+            check.id,
+            timeout_s,
+            request.request_id,
+            request.checkpoint,
+        )
+        reason = f"check timed out after {timeout_s}s"
+    except Exception as exc:
+        logger.exception(
+            "check %s raised (request %s, checkpoint %s)",
+            check.id,
+            request.request_id,
+            request.checkpoint,
+        )
+        reason = f"check error: {type(exc).__name__}: {exc}"
+    return make_result(check.id, request, "error", reason, started)
+
+
+async def run_checkpoint(
+    request: CanonicalRequest,
+    policy: Policy,
+    policy_version: str,
+    caller: Caller,
+    *,
+    ledger: UsageLedger | None = None,
+    signatures: list[Signature] | None = None,
+    judge: Judge | None = None,
+    audit: AuditSink,
+    checks: list[Check] | None = None,
+    usage: Usage | None = None,
+    usage_tokens: int = 0,
+    usage_cost: float | None = None,
+) -> tuple[Decision, CanonicalRequest]:
+    """Run every enabled check for `request.checkpoint`, cheapest first.
+
+    Returns the decision and the request to forward: it carries the redactions of checks whose
+    action is `redact`. Each check sees the redactions of every check before it, whatever that
+    check's mode, so Jev only ever gets redacted text, also when pii_secrets only monitors.
+    A redaction's offsets point into the copy the checks saw. Where that copy already carries a
+    monitor-only redaction they cannot be mapped back onto the forwarded text, so every message
+    an enforced redaction touches is forwarded as the checks saw it: more redacted, never less.
+
+    Writes one audit row per check result, then always one `turn_summary` row for the
+    checkpoint (also when no check is enabled). Upstream usage goes on that row at the reply
+    checkpoints only: `usage` if given (tokens = prompt + completion), else `usage_tokens`. Cost
+    is `usage_cost`, or tokens / 1000 * the model's price_per_1k_tokens when it is None. Its
+    conversation_id comes from `request.messages`: pass the agent's own (unredacted) messages at
+    the reply checkpoint too, so every row of a session gets the same id.
+    """
+    checkpoint = request.checkpoint
+    ctx = build_context(policy, caller, ledger=ledger, signatures=signatures, judge=judge)
+    candidates = ordered_checks() if checks is None else checks
+    results: list[CheckResult] = []
+    blocked_by: str | None = None
+    checked = request  # what the next check sees: every redaction so far, any mode
+    forwarded = request  # what goes upstream: enforced redactions only
+
+    for check in sorted(candidates, key=lambda c: c.cost_rank):
+        if checkpoint not in check.checkpoints:
+            continue
+        mode = policy.mode(check.id, checkpoint)
+        if mode == Mode.off:
+            continue
+        # A copy, so a check cannot change the policy snapshot other requests share.
+        settings = dict(policy.check_config(check.id).params)
+        result = await _run_check(check, checked, settings, ctx)
+        result.action = apply_mode(result.verdict, mode)
+        if result.redactions:
+            try:
+                checked = apply_redactions(checked, result.redactions)
+                if result.action == Action.redact:
+                    touched = {r.message_index for r in result.redactions}
+                    forwarded = _copy_contents(forwarded, checked, touched)
+            except ValueError as exc:
+                # A bad span means the check misbehaved: fail closed like any other check error.
+                logger.error(
+                    "check %s returned an invalid redaction (request %s): %s",
+                    check.id,
+                    request.request_id,
+                    exc,
+                )
+                result.verdict = "error"
+                result.reason = f"check error: invalid redaction: {exc}"
+                result.redactions = []
+                result.action = apply_mode("error", mode)
+        results.append(result)
+        await audit.write(_audit_record(request, result, policy_version))
+        if result.action == Action.block:
+            blocked_by = check.id
+            break
+
+    action = max((r.action for r in results), key=_STRENGTH.__getitem__, default=Action.allow)
+    decision = Decision(
+        request_id=request.request_id,
+        checkpoint=checkpoint,
+        action=action,
+        blocked_by=blocked_by,
+        results=results,
+    )
+    await audit.write(
+        _turn_summary(
+            request,
+            decision,
+            policy,
+            policy_version,
+            usage=usage,
+            tokens=usage_tokens,
+            cost=usage_cost,
+        )
+    )
+    return decision, forwarded
+
+
+def _copy_contents(
+    dst: CanonicalRequest, src: CanonicalRequest, indexes: set[int]
+) -> CanonicalRequest:
+    """A deep copy of `dst` whose messages at `indexes` (REPLY_INDEX: the reply) carry the
+    content they have in `src`."""
+    out = dst.model_copy(deep=True)
+    for index in indexes:
+        if index == REPLY_INDEX:
+            if out.reply is not None and src.reply is not None:
+                out.reply.content = src.reply.content
+        else:
+            out.messages[index].content = src.messages[index].content
+    return out
+
+
+def _audit_record(
+    request: CanonicalRequest, result: CheckResult, policy_version: str
+) -> AuditRecord:
+    return AuditRecord(
+        ts=datetime.now(UTC).isoformat(),
+        request_id=request.request_id,
+        caller_id=request.caller_id,
+        model=request.model,
+        checkpoint=request.checkpoint,
+        check=result.check,
+        action=result.action,
+        reason=result.reason,
+        score=result.score,
+        latency_ms=result.latency_ms,
+        decided_by=result.decided_by,
+        policy_version=policy_version,
+    )
+
+
+def _turn_summary(
+    request: CanonicalRequest,
+    decision: Decision,
+    policy: Policy,
+    policy_version: str,
+    *,
+    usage: Usage | None,
+    tokens: int,
+    cost: float | None,
+) -> AuditRecord:
+    """The agent and economic fact row of one checkpoint (backend/docs/observability.md)."""
+    results = decision.results
+    if decision.action == Action.allow:
+        reason = "allowed" if results else "allowed: no check enabled at this checkpoint"
+    else:
+        by = ", ".join(r.check for r in results if r.action == decision.action)
+        reason = f"{_PAST[decision.action]} by {by}"
+    # Usage goes on this one row per request, so summing the audit table does not double count.
+    if request.checkpoint not in _USAGE_CHECKPOINTS:
+        usage, tokens, cost = None, 0, 0.0
+    if usage is not None:
+        tokens = usage.prompt_tokens + usage.completion_tokens
+    if cost is None:
+        model = policy.models.get(request.model)
+        cost = tokens / 1000 * model.price_per_1k_tokens if model else 0.0
+    overhead = sum(r.latency_ms for r in results)
+    assistant = [m for m in request.messages if m.role == "assistant"]
+    reply_calls = request.reply.tool_calls if request.reply else []
+    return AuditRecord(
+        ts=datetime.now(UTC).isoformat(),
+        request_id=request.request_id,
+        caller_id=request.caller_id,
+        model=request.model,
+        checkpoint=request.checkpoint,
+        check=TURN_SUMMARY,
+        action=decision.action,
+        reason=reason,
+        score=max((r.score for r in results), default=0.0),
+        latency_ms=overhead,
+        # A block stops the pipeline, so the blocking result is the last one.
+        decided_by=results[-1].decided_by if decision.blocked_by else DecidedBy.rules,
+        tokens=tokens,
+        cost=cost,
+        policy_version=policy_version,
+        conversation_id=conversation_id(request.caller_id, request.messages),
+        step=len(assistant),
+        messages=len(request.messages),
+        tool_calls=len(reply_calls) if request.reply else None,
+        tools=",".join(c.name for c in reply_calls) or None,
+        tool_calls_total=sum(len(m.tool_calls) for m in assistant) + len(reply_calls),
+        prompt_tokens=usage.prompt_tokens if usage else None,
+        completion_tokens=usage.completion_tokens if usage else None,
+        upstream_latency_ms=usage.upstream_latency_ms if usage else None,
+        overhead_ms=overhead,
+        blocked_by=decision.blocked_by,
+    )
