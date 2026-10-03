@@ -1,112 +1,133 @@
-# AGENTS.md — shared context for everyone working in this repo
+# AGENTS.md — shared rules for everyone working in this repo
 
-Read this first. It applies to every human and every AI agent (Claude Code, Codex, Cursor, Copilot, anything else) on the team. If something here conflicts with your tool's defaults, this file wins. If it is wrong or outdated, fix it in a small PR instead of working around it.
+Read this first. It applies to every human and every AI agent (Claude Code, GitHub Copilot, Codex, anything else). If it conflicts with your tool's defaults, this file wins. If it is wrong or outdated, fix it in a small PR instead of working around it.
 
 ## 1. Project
 
-A resilient middleware that verifies the correctness of decisions and traces long-running autonomous multi-agent sessions, with **jev** acting as the decision maker. The middleware is agnostic to the goals of the agent system it wraps. Agents are configured through a UI.
+**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](docs/architecture.md). Data shapes and endpoints: [`contracts/`](contracts/README.md).
 
-- Hackathon project, team of four, each person runs their own agents.
-- Most design details are still open. Do not invent them: if a task depends on an undecided detail, say so and ask the human. In particular, do not guess what *jev* is or how it works.
-- Demo deadline / scope: **TBD** (fill in).
+- **Rules enforce, Jev decides.** Deterministic rule checks are hard limits, and a rule block is final. **Jev** is the AI decision maker, a remote (non-local) LLM. Jev scores what the rules let through, and the score is compared against a policy threshold. If Jev is unavailable, the request goes to local Ollama model
+- **Policy is the only source of behaviour.** It is one YAML file, validated on load and hot-reloaded. An invalid edit is rejected and the old policy stays active. Nothing is hard-coded. Judges will edit the policy while the system runs.
+- **Fail closed and explain every block.** Every decision is audited.
+- Design details not written down in `docs/` or `contracts/` are undecided. Ask your human instead of inventing them. Ask before expanding scope.
 
-Design consequences that are already settled:
+## 2. How it works
 
-- **Goal-agnostic core.** No domain-specific logic or hardcoded agent goals in the core. Anything goal-specific is configuration or a plugin.
-- **Configuration is data.** Agent configs come from the UI, so they are validated at the boundary and never trusted as code.
-- **Resilience and traceability are the product**, not extras. Failures must be recorded and surfaced, never swallowed silently.
+Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
 
-## 2. Stack
+- **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and API key and is protected with zero code changes. Caller identity comes from the API key. A second entry point guards tool execution itself, so an agent that ignores our verdict is still stopped.
+- **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
+- **Universal adapter:** every request is translated into one canonical internal model, and checks never see vendor JSON. Only the OpenAI adapter is built. Other formats are "one more adapter" by design.
+- **Checks:** all checks share one interface. They receive the canonical request plus their policy settings and return `allow | redact | block | flag` with a score, reason and latency. They run cheap before expensive and stop at the first block.
+  - Rule checks:
+    - PII and secrets redaction
+    - API-key permissions (allowed models and tools)
+    - tool-argument validation (shell, destructive SQL, path traversal, unsafe deserialization)
+    - an external attack-signature feed
+    - budgets (tokens, cost, rate)
+    - loop detection
+  - AI check: Jev (prompt injection, hidden instructions in tool results, overall risk score).
+- **Policy:** controls which checks are on, the action per checkpoint (`off | monitor | redact | block`), thresholds, profiles (`strict | balanced | permissive`), models, callers and budgets.
+- **Blocked requests** return a normal OpenAI-format refusal with the reason, so agents don't crash.
+- **Reporting:**
+  - The append-only audit log stores every decision with its reason, latency and cost, and it is exportable.
+  - The dashboard shows security posture, blocked threats, budget use and overhead. It also has a policy editor and a chat playground that shows which checks fired.
+- **Tests:** data-driven YAML cases, run with one command. Every check has at least one allowed and one blocked case.
+- **Scope:**
+  - We build: the layer, one tiny demo agent (a fake customer DB with PII, plus a shell/code tool), the dashboard and the tests.
+  - We do not build: a multi-agent SDK/orchestrator, RAG, non-OpenAI adapters, or auth beyond API keys.
 
-- **Backend:** Python, FastAPI, Pydantic v2. Lint/format with `ruff`, tests with `pytest`. Pin the Python version in `pyproject.toml` when scaffolding.
-- **Frontend:** React (Vite) + TypeScript, deliberately simple. No state-management library until a concrete need appears.
-- **Contract:** FastAPI's OpenAPI schema is the source of truth for the HTTP API. The frontend talks to the backend through a single API client module, so contract changes touch one place.
+## 3. Stack
 
-Proposed layout (whoever scaffolds first keeps this section in sync):
+- **Backend:** Python, FastAPI, Pydantic v2. `ruff` for lint/format, `pytest` for tests.
+- **Frontend:** React (Vite) + TypeScript, deliberately simple, with no state-management library.
+- **AI decision maker:** Jev (remote) if available . Ollama as a fallback. No paid APIs. 
+- **Contract:** the backend and frontend build to `contracts/`. The frontend talks to the backend through a single API client module.
+
+## 4. Repository layout and context
 
 ```
-backend/      FastAPI app, core logic, tests
-frontend/     React app
-docs/         extra notes, only when needed
-AGENTS.md     this file
+AGENTS.md            Rules for every agent (this file). CLAUDE.md = "@AGENTS.md".
+.specify/            spec-kit: memory/constitution.md (principles only, no tech),
+                     templates/, scripts/, integration.json.
+docs/architecture.md The single description of stack, data model and design.
+contracts/           API shapes and schemas. The one source of truth for backend and frontend.
+specs/NNN-<name>/    One folder per feature: spec.md (what/why), plan.md (how), tasks.md.
+backend/             Backend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+frontend/            Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+.claude/, .github/   spec-kit commands for Claude Code and Copilot.
 ```
 
-## 3. Working together
+- The root `AGENTS.md`/`CLAUDE.md` load automatically. The `backend/` and `frontend/` rule files load only when working in that folder.
+- `docs/`, `contracts/`, `specs/` and `.specify/` are never auto-loaded. **Read `docs/` and `contracts/` before writing code.**
+- **Every fact lives in exactly one place.** Rules go in AGENTS.md, design in `docs/`, API shapes in `contracts/`, principles in the constitution. Specs link to these and never copy them.
 
-### Zones
-
-Each person owns a rough zone. Zones are a hint to reduce collisions, not a lock, and they will shift as the project moves. Changing a zone is a one-line edit to this table.
+## 5. Working together
 
 | Zone | Paths | Owner |
 |------|-------|-------|
+| Contracts + design (shared) | `contracts/`, `docs/` | everyone, small announced PRs only |
 | Backend core | `backend/` | TBD |
-| API / contract | `backend/api/` (proposed) | TBD |
 | Frontend / UI | `frontend/` | TBD |
+| Demo agent + tests | TBD | TBD |
 
-Rules for crossing zones:
-
-1. Before editing outside your zone, check what is in flight: `git fetch` and look at open branches/PRs touching the same files.
-2. If someone else is changing the same files, tell your human so they can sync with the teammate. Agents do not talk to each other directly; coordination goes through git and the humans.
-3. Keep cross-zone edits small and focused. Never reformat or restructure files you do not own.
+Zones are a hint, not a lock. Before editing outside your zone, `git fetch` and check open branches/PRs on the same files. If someone else is changing them, tell your human. Agents coordinate only through git and humans. Keep cross-zone edits small, and never reformat files you do not own.
 
 ### Git
 
-- **Never push to `main` directly.** All work goes through feature branches and PRs.
-- **Branch per feature**, created from fresh `origin/main`: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`. Slugs are short, lowercase, hyphenated.
-- **Keep branches short-lived** (hours, not days). Long branches are what cause painful conflicts.
-- **Commits:** English, imperative, [Conventional Commits](https://www.conventionalcommits.org/) style (`feat: add run timeline endpoint`), subject at most 72 chars. Small, focused commits. Push to your branch often.
-- **No mandatory review.** The author merges their own PR, but only after the checks below pass. Squash merge, then delete the branch.
-- **Keep your branch current** by merging `origin/main` into it (not rebasing), so no force-push is needed. Do this before opening the PR and before merging.
-- Force-push only your own feature branch and only with `--force-with-lease`. Never force-push `main`.
-- **Agents** commit and push to the feature branch of their current task. They open a PR, and merge only when their human says so.
-
-Typical flow:
+- Never push to `main`. Create one branch per feature from fresh `origin/main`: `feat/ fix/ chore/ docs/<slug>`. Keep branches short-lived (hours).
+- Use Conventional Commits in English, imperative mood, with a subject of at most 72 chars. Keep commits small and push often.
+- No mandatory review. The author squash-merges their own PR after checks pass, then deletes the branch.
+- Merge `origin/main` into your branch (don't rebase) before opening and before merging the PR. Force-push only your own branch, with `--force-with-lease`.
+- Agents commit and push to their task's branch and open a PR. They merge only when their human says so.
 
 ```bash
 git fetch origin && git checkout -b feat/<slug> origin/main
-# work, commit small, push
 git push -u origin feat/<slug>
-git fetch origin && git merge origin/main      # before the PR
-gh pr create --fill
-gh pr merge --squash --delete-branch           # after checks pass, when told to merge
+git fetch origin && git merge origin/main && gh pr create --fill
+gh pr merge --squash --delete-branch   # when told to merge
 ```
 
-### Definition of done (before any merge)
+### Definition of done
 
-- Backend: `ruff check . && ruff format --check . && pytest` pass.
-- Frontend: `npm run lint && npm run build` pass.
-- You actually ran the thing and saw it work, not only the tests.
-- The PR description says what changed and why, plus anything teammates must do (new env var, new dependency, migration).
+- Backend: `ruff check . && ruff format --check . && pytest` pass. Frontend: `npm run lint && npm run build` pass.
+- You actually ran the thing and saw it work.
+- The PR says what changed, why, and anything teammates must do (env var, dependency, migration).
 
-If a command above does not exist yet, creating it is part of the first task that needs it.
+## 6. Code principles
 
-## 4. Code principles
+1. **Simplicity first.** Write the minimum code that works and can be demoed. No speculative features or abstractions.
+2. **Surgical changes.** Every changed line traces to the task. Mention unrelated problems in the PR instead of fixing them.
+3. **Match the surrounding code** in naming, structure and comment density.
+4. **Validate at trust boundaries.** Use Pydantic for everything entering the backend (HTTP, policy, model output, Jev responses).
+5. **Explicit errors.** No bare or swallowed exceptions. Log with enough context to debug after the fact.
+6. **Types.** Type hints across module boundaries. TS `strict`, and no `any` without a comment.
+7. **Tests scaled to the work.** Deterministic logic (checks, parsing, policy) gets pytest tests. Glue and UI get a smoke check.
+8. **Dependencies** only when they clearly save time. Say so in the PR, and put lockfile changes in their own commit.
+9. **Secrets** are never committed. Keep a `.env.example` with variable names only.
+10. **Comments** explain *why*, in English. No commented-out code.
 
-1. **Simplicity first.** Write the minimum code that solves the problem. No speculative features, no abstraction for single-use code, no configurability nobody asked for. For a hackathon, working and demoable beats elegant.
-2. **Surgical changes.** Every changed line should trace to the task. Do not "improve" neighbouring code, rename things, or reformat files you did not need to touch. Clean up only your own mess. Mention unrelated problems in the PR instead of fixing them.
-3. **Match the surrounding code.** Follow existing naming, structure and comment density, even if you would do it differently.
-4. **Validate at trust boundaries.** Pydantic models for everything entering the backend (HTTP, UI-provided agent configs, model output). Do not add defensive checks for states that cannot occur.
-5. **Explicit errors.** No bare `except`, no swallowed exceptions. Fail loudly with a clear message, and log with enough context to debug a long session after the fact.
-6. **Types.** Type hints on all backend functions that cross a module boundary. TypeScript `strict`, no `any` without a comment explaining why.
-7. **Tests scaled to the work.** Deterministic logic (parsing, validation, routing, decision checks) gets pytest tests. Glue code and UI get a smoke check. No coverage targets.
-8. **Dependencies.** Add one only when it clearly saves time, and say so in the PR. Lockfile changes are conflict magnets, so keep them in their own commit.
-9. **Secrets.** Never commit keys, tokens or `.env`. Keep a `.env.example` with variable names only.
-10. **Comments** explain *why*, not *what*. English only. No commented-out code.
+## 7. For AI agents
 
-## 5. For AI agents specifically
+- Read this file at session start. Re-read the zones before touching shared files.
+- Use the spec-kit commands (`/speckit-*`) for feature work.
+- For anything non-trivial, state a brief plan with verification steps before coding.
+- Ask when a requirement is ambiguous or undecided. Never silently pick an interpretation.
+- Report what you actually ran and what it printed. Never claim an unrun check passed.
+- No destructive git commands (`reset --hard`, `clean -fd`, force-push, branch deletion) unless your human asked for exactly that.
+- Prefer targeted edits over wholesale rewrites.
+- Record team-wide decisions in section 8, not only in chat.
 
-- Read this file at the start of every session. Re-read the Zones table before touching shared files.
-- For anything beyond a trivial change, state a brief plan (steps, and how you will verify each) before coding.
-- Ask the human when a requirement is ambiguous or touches an undecided design point. Do not silently pick one interpretation.
-- Report what you actually ran and what it printed. Never claim a check passed without running it.
-- Do not run destructive git commands (`reset --hard`, `clean -fd`, force-push, branch deletion) unless your human asked for that exact thing.
-- Do not rewrite files wholesale when a targeted edit works.
-- Record anything the whole team must know (a decision, a changed contract, a gotcha) in section 6, not only in chat.
+## 8. Decisions and open questions
 
-## 6. Decisions and open questions
-
-Append-only, newest at the bottom, one line each: `YYYY-MM-DD — decision or question (who)`. Merge conflicts here are trivial, so keep both sides.
+Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. On a merge conflict, keep both sides.
 
 - 2026-10-03 — Stack: FastAPI backend + simple React frontend. Feature branches, PR to `main`, no mandatory review. All code, comments and commits in English.
 - 2026-10-03 — OPEN: what `jev` is, in one sentence, so every agent shares the same definition.
 - 2026-10-03 — OPEN: demo deadline and what the demo must show.
+- 2026-10-03 — Project is the AI Control Layer middleware (PROJECT_CONTEXT_1.md); multi-agent session tracing dropped.
+- 2026-10-03 — Jev = remote LLM decision maker (closes the "what jev is" question); rules enforce, Jev cannot override a rule block; Jev unavailable → fail closed.
+- 2026-10-03 — Repo layout + "every fact in one place" rule adopted (section 4).
+- 2026-10-03 — OPEN: Jev endpoint, auth, request/response format, cost.
+- 2026-10-03 — Jev unavailable → local Ollama fallback; both unavailable → fail closed (supersedes the "fail closed" part above).
+- 2026-10-03 — Draft v0.1 of `docs/architecture.md` and `contracts/` (models, HTTP API) added. OPEN: policy schema (`contracts/policy.example.yaml`).
