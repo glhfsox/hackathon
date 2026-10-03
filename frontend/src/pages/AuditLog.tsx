@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import SplitPane from '../components/SplitPane'
+import { sinceIso, type TimeRange } from '../ranges'
 import { auditExportUrl, getAudit } from '../api/client'
 import { ACTIONS, CHECKPOINTS, type Action, type AuditFilters, type AuditRecord, type Checkpoint } from '../api/types'
 import { ActionTag, Pane, Status, TextBar } from '../components/ui'
@@ -61,11 +63,14 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
   )
 }
 
-export default function AuditLog() {
+export default function AuditLog({ range }: { range: TimeRange }) {
   const [filters, setFilters] = useState<AuditFilters>({})
   const [showSummary, setShowSummary] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
-  const audit = usePolled(() => getAudit(filters, PAGE_SIZE), POLL_MS, JSON.stringify(filters))
+  const [selection, setSelected] = useState<{ id: string; key: string } | null>(null)
+  const queryKey = `${range.minutes}:${JSON.stringify(filters)}`
+  const queryFilters = { ...filters, since: sinceIso(range) }
+  const audit = usePolled(() => getAudit({ ...filters, since: sinceIso(range) }, PAGE_SIZE), POLL_MS, queryKey)
+  const selected = selection?.key === queryKey ? selection.id : null
 
   const set = (key: keyof AuditFilters, value: string) =>
     setFilters((f) => ({ ...f, [key]: value || undefined }))
@@ -108,17 +113,17 @@ export default function AuditLog() {
             <input type="checkbox" checked={showSummary} onChange={(e) => setShowSummary(e.target.checked)} /> turn_summary
           </label>
           <span className="accent">|</span>
-          <a className="btn" href={auditExportUrl(filters, 'csv')}>
+          <a className="btn" href={auditExportUrl(queryFilters, 'csv')}>
             [e]xport csv
           </a>
-          <a className="btn" href={auditExportUrl(filters, 'json')}>
+          <a className="btn" href={auditExportUrl(queryFilters, 'json')}>
             [j]son
           </a>
         </div>
       </Pane>
 
-      <div className="row grow">
-        <Pane title={`audit.log (${total})`} style={{ flex: 2 }} contentClassName="flush">
+      <SplitPane className="grow" label="Resize audit trace" initial={0.65} minFirst={260} minSecond={200} first={
+        <Pane title={`audit.log (${total})`} className="grow" contentClassName="flush">
           <Status error={audit.error} loading={audit.loading && !audit.data} />
           <table className="log" style={{ fontSize: 12.5 }}>
             <thead>
@@ -142,7 +147,7 @@ export default function AuditLog() {
                   <tr
                     key={`${r.ts}-${i}`}
                     className={r.request_id && r.request_id === selected ? 'sel' : ''}
-                    onClick={() => r.request_id && setSelected(r.request_id)}
+                    onClick={() => r.request_id && setSelected({ id: r.request_id, key: queryKey })}
                     title={r.reason}
                   >
                     <td className={`num ${system ? 'accent' : 'dim'}`}>{system ? '!' : total - items.indexOf(r)}</td>
@@ -174,10 +179,11 @@ export default function AuditLog() {
             </div>
           )}
         </Pane>
+      } second={
         <Pane title={selected ? `trace ${shortId(selected)}` : 'trace'} className="grow" style={{ background: '#000' }}>
           {selected ? <Trace requestId={selected} rows={items} /> : <div className="dim">// select a row to see its decision trace</div>}
         </Pane>
-      </div>
+      } />
     </>
   )
 }

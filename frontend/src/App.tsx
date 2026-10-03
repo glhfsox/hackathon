@@ -5,7 +5,9 @@ import AuditLog from './pages/AuditLog'
 import Overview from './pages/Overview'
 import PolicyEditor from './pages/PolicyEditor'
 import Playground from './pages/Playground'
-import { RANGES, type Range } from './ranges'
+import { RANGES, type TimeRange } from './ranges'
+import TimeFilter from './components/TimeFilter'
+import SplitPane from './components/SplitPane'
 
 const PAGES = [
   { id: 'overview', tab: '1:overview', file: 'overview' },
@@ -22,7 +24,7 @@ function pageFromHash(): PageId {
 
 export default function App() {
   const [page, setPage] = useState<PageId>(pageFromHash)
-  const [range, setRange] = useState<Range>('24h')
+  const [range, setRange] = useState<TimeRange>({ minutes: RANGES['24h'], label: '24h' })
   const clock = useClock()
   const health = usePolled(getHealth, 5000)
 
@@ -49,8 +51,8 @@ export default function App() {
         </div>
       </header>
 
-      <div className="body">
-        <aside className="tree">
+      <SplitPane className="body" label="Resize navigation" initial={0.17} minFirst={140} minSecond={360} first={
+        <aside className="tree" aria-label="Navigation">
           <div className="dim" style={{ padding: '0 8px 4px' }}>
             ▾ aegis/
           </div>
@@ -65,14 +67,14 @@ export default function App() {
             ~<br />~<br />~
           </div>
         </aside>
-
+      } second={
         <main className="main">
           {page === 'overview' && <Overview range={range} />}
-          {page === 'audit' && <AuditLog />}
+          {page === 'audit' && <AuditLog range={range} />}
           {page === 'policy' && <PolicyEditor onSaved={health.reload} />}
           {page === 'playground' && <Playground />}
         </main>
-      </div>
+      } />
 
       <footer className="statusline">
         <div>
@@ -99,22 +101,7 @@ export default function App() {
           <span className="dim">utf-8 | {clock}</span>
         </div>
       </footer>
-      <div className="cmdline">
-        <div>
-          :filter since=
-          {(Object.keys(RANGES) as Range[]).map((r) => (
-            <button
-              key={r}
-              className={`btn ${r === range ? 'accent bold' : ''}`}
-              style={{ marginRight: 8 }}
-              onClick={() => setRange(r)}
-            >
-              {r}
-            </button>
-          ))}
-          <span className="cursor blink" />
-        </div>
-      </div>
+      {(page === 'overview' || page === 'audit') && <TimeFilter range={range} onChange={setRange} />}
     </div>
   )
 }

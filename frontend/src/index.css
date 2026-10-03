@@ -115,13 +115,15 @@ textarea {
   min-height: 0;
 }
 .tree {
-  width: 240px;
+  width: 100%;
+  height: 100%;
   flex-shrink: 0;
   border-right: 1px solid var(--line);
   background: var(--bg-pane);
   display: flex;
   flex-direction: column;
   padding: 8px 0;
+  overflow: auto;
 }
 .tree a {
   padding: 2px 8px;
@@ -325,6 +327,105 @@ th {
   height: 16px;
   background: var(--accent);
   vertical-align: middle;
+}
+
+/* Editable time window, shared by Overview and Audit. */
+.time-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.time-presets, .custom-window {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn.time-preset, .btn.apply-window, .btn.send-prompt {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--fg);
+}
+.btn.time-preset[aria-pressed='true'], .btn.send-prompt:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+  font-weight: 700;
+}
+button:focus-visible, .split-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Shared panel boundaries. Each pane scrolls inside its assigned space. */
+.split-pane {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.split-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.split-handle {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  z-index: 2;
+}
+.split-horizontal > .split-handle { cursor: col-resize; }
+.split-vertical > .split-handle { cursor: row-resize; }
+.split-handle::after {
+  content: '';
+  position: absolute;
+  background: var(--line);
+}
+.split-horizontal > .split-handle::after { top: 35%; bottom: 35%; left: 3px; width: 2px; }
+.split-vertical > .split-handle::after { left: 35%; right: 35%; top: 3px; height: 2px; }
+.split-handle:hover::after, .split-handle:focus::after { background: var(--accent); }
+.split-vertical > .split-content > .pane { margin-top: 12px; }
+.prompt-composer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px;
+  gap: 6px;
+  background: var(--bg-pane);
+  border: 1px solid var(--line);
+  overflow: auto;
+}
+.prompt-label { color: var(--accent); }
+.prompt-composer textarea {
+  flex: 1;
+  min-height: 32px;
+  width: 100%;
+  resize: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  caret-color: var(--accent);
+}
+.prompt-composer textarea:focus { outline: 1px solid var(--accent); }
+.prompt-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.prompt-shortcut { margin-left: auto; }
+@media (max-width: 900px) {
+  .tabbar { flex-wrap: wrap; }
+  .tabbar nav { gap: 0; }
+  .statusline { flex-wrap: wrap; gap: 4px; }
+  .prompt-shortcut { display: none; }
 }
 .error-text {
   color: var(--accent);

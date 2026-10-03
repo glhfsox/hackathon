@@ -2,7 +2,7 @@ import { getAudit, getHealth, getMetrics } from '../api/client'
 import type { Metrics, Mode, TimelineBucket } from '../api/types'
 import { ActionTag, Pane, Status, TextBar } from '../components/ui'
 import { fmtTime, usePolled } from '../hooks'
-import { RANGES, sinceIso, type Range } from '../ranges'
+import { sinceIso, type TimeRange } from '../ranges'
 
 const POLL_MS = 5000
 const BINS = 12
@@ -40,8 +40,8 @@ function checkModes(metrics: Metrics) {
 }
 
 /** Spread the per-minute buckets over BINS equal slices of the selected window. */
-function binTimeline(timeline: TimelineBucket[], range: Range) {
-  const span = RANGES[range] * 60_000
+function binTimeline(timeline: TimelineBucket[], range: TimeRange) {
+  const span = range.minutes * 60_000
   const start = Date.now() - span
   const bins = Array.from({ length: BINS }, () => ({ blocked: 0, redacted: 0, flagged: 0 }))
   for (const b of timeline) {
@@ -54,16 +54,16 @@ function binTimeline(timeline: TimelineBucket[], range: Range) {
   return bins
 }
 
-function binLabel(i: number, range: Range): string {
+function binLabel(i: number, range: TimeRange): string {
   if (i === BINS - 1) return 'now'
-  const minutes = Math.round((RANGES[range] * (BINS - 1 - i)) / BINS)
+  const minutes = Math.round((range.minutes * (BINS - 1 - i)) / BINS)
   return minutes >= 1440 ? `-${Math.round(minutes / 1440)}d` : minutes >= 60 ? `-${Math.round(minutes / 60)}h` : `-${minutes}m`
 }
 
-export default function Overview({ range }: { range: Range }) {
-  const metrics = usePolled(() => getMetrics(sinceIso(range)), POLL_MS, range)
+export default function Overview({ range }: { range: TimeRange }) {
+  const metrics = usePolled(() => getMetrics(sinceIso(range)), POLL_MS, String(range.minutes))
   const health = usePolled(getHealth, POLL_MS)
-  const feed = usePolled(() => getAudit({ since: sinceIso(range) }, 200), POLL_MS, range)
+  const feed = usePolled(() => getAudit({ since: sinceIso(range) }, 200), POLL_MS, String(range.minutes))
 
   const m = metrics.data
   if (!m) return <Status error={metrics.error} loading={metrics.loading} />
@@ -144,7 +144,7 @@ export default function Overview({ range }: { range: Range }) {
       </div>
 
       <div className="row" style={{ flex: 1 }}>
-        <Pane title={`threats.${range}`} className="grow">
+        <Pane title={`threats.${range.label}`} className="grow">
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '100%', minHeight: 90 }}>
             {bins.map((b, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
