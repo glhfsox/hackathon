@@ -1,4 +1,6 @@
 .env
+__pycache__/
+*.pyc
 
 # backend runtime output and caches
 logs/
