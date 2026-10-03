@@ -1,4 +1,5 @@
 from app.models.canonical_request import CanonicalRequest
+from app.models.check_config import CheckConfig
 from app.models.check_result import CheckResult
 from app.models.decision import Decision
 from app.models.enums import Action, Checkpoint, DecidedBy, Mode
@@ -14,6 +15,7 @@ from app.models.tool_def import ToolDef
 __all__ = [
     "Action",
     "CanonicalRequest",
+    "CheckConfig",
     "CheckResult",
     "Checkpoint",
     "DecidedBy",
