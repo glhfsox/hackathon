@@ -1,8 +1,9 @@
 """The Analyst and Operator agents and the handoff between them.
 
 Two modes. Direct: both agents talk to an OpenAI-compatible model endpoint (Ollama by default)
-and run their tools unchecked. Proxy: each agent has its own API key, `client` points at the
-control layer, and every tool call goes through /v1/tools/check first, as demo_data/agent.py does.
+and run their tools unchecked. Proxy: each agent sends its own signed JWT, `client` points at the
+control layer, and the layer checks every reply's tool calls (RBAC, tool_args, Jev) before the
+agent sees them, as backend/demo does.
 """
 
 import json
@@ -13,7 +14,7 @@ from typing import Literal
 import httpx
 from pydantic import ValidationError
 
-from demo_data.agent import Control, Decision, GuardAnswer, contract_messages, tool_result_content
+from demo_data.agent import Control, Decision, tool_result_content
 from demo_data.agent import tool_definitions as analyst_tool_definitions
 from test_app import operator_tools
 
@@ -69,15 +70,15 @@ class Agent:
     system_prompt: str
     tools: list[dict]
     run_tool: ToolRunner
-    # The agent's own control-layer key. None means direct mode: no proxy, no tool guard.
-    api_key: str | None = None
+    # The agent's control-layer JWT. None means direct mode: no proxy, no checks.
+    token: str | None = None
 
 
-def analyst(run_tool: ToolRunner, api_key: str | None = None) -> Agent:
-    return Agent("analyst", ANALYST_SYSTEM, analyst_tool_definitions(), run_tool, api_key)
+def analyst(run_tool: ToolRunner, token: str | None = None) -> Agent:
+    return Agent("analyst", ANALYST_SYSTEM, analyst_tool_definitions(), run_tool, token)
 
 
-def operator(run_tool: ToolRunner, role: str = "clerk", api_key: str | None = None) -> Agent:
+def operator(run_tool: ToolRunner, role: str = "clerk", token: str | None = None) -> Agent:
     """The Operator with only the tools `role` may use. The model is not offered the others, and
     a call to one anyway is refused before it reaches `run_tool`."""
     allowed = USER_ROLES[role]
@@ -89,7 +90,7 @@ def operator(run_tool: ToolRunner, role: str = "clerk", api_key: str | None = No
         return run_tool(name, arguments)
 
     prompt = OPERATOR_SYSTEM.format(tools=", ".join(allowed), role=role)
-    return Agent("operator", prompt, tools, guarded, api_key)
+    return Agent("operator", prompt, tools, guarded, token)
 
 
 def run_agent(
@@ -104,13 +105,13 @@ def run_agent(
 ) -> AgentRun:
     """Chat until the model answers without a tool call or `max_steps` model calls were made.
 
-    With an `api_key` on the agent, `client` points at the control layer: every reply carries
-    its decisions, and every tool call is sent to the tool guard before it runs."""
+    With a `token` on the agent, `client` points at the control layer: every reply carries its
+    decisions, and a tool call in a reply has already passed the layer's tool_call checks."""
     messages = [
         {"role": "system", "content": agent.system_prompt},
         {"role": "user", "content": prompt},
     ]
-    headers = {"Authorization": f"Bearer {agent.api_key}"} if agent.api_key else {}
+    headers = {"Authorization": f"Bearer {agent.token}"} if agent.token else {}
     calls: list[Step] = []
     decisions: list[dict] = []
 
@@ -142,7 +143,7 @@ def run_agent(
             response.raise_for_status()
             body = response.json()
             message = body["choices"][0]["message"]
-            blocked = agent.api_key is not None and record(
+            blocked = agent.token is not None and record(
                 Control.model_validate(body["control"]).decisions
             )
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -169,17 +170,6 @@ def run_agent(
                 result = f"error: {type(exc).__name__}: {exc}"
                 arguments = raw
             else:
-                if agent.api_key is not None:
-                    try:
-                        verdict = check_tool(client, headers, call["id"], name, arguments, messages)
-                    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-                        return finish("error", f"tool guard request failed: {exc!r}", step)
-                    record([verdict.decision])
-                    # A redact verdict carries no approved arguments, so it stops the run too.
-                    if not verdict.allowed or verdict.decision.action in ("block", "redact"):
-                        reason = guard_reason(verdict.decision)
-                        calls.append(Step(step, name, arguments, f"not run: {reason}"))
-                        return finish("blocked", f"tool guard stopped {name}: {reason}", step)
                 try:
                     result = tool_result_content(agent.run_tool(name, arguments))
                 except (ValueError, ValidationError) as exc:
@@ -191,35 +181,6 @@ def run_agent(
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
     answer = f"stopped after {max_steps} model calls without a final answer"
     return finish("limit", answer, max_steps)
-
-
-def check_tool(
-    client: httpx.Client,
-    headers: dict[str, str],
-    call_id: str,
-    name: str,
-    arguments: dict,
-    messages: list[dict],
-) -> GuardAnswer:
-    """Ask the tool guard (POST /v1/tools/check) whether this call may run."""
-    response = client.post(
-        "tools/check",
-        headers=headers,
-        json={
-            "tool_call": {"id": call_id, "name": name, "arguments": arguments},
-            "messages": contract_messages(messages),
-        },
-    )
-    response.raise_for_status()
-    return GuardAnswer.model_validate(response.json())
-
-
-def guard_reason(decision: Decision) -> str:
-    """The reason of the check that decided, for the console and the model."""
-    for result in decision.results:
-        if result.get("check") == decision.blocked_by or result.get("action") == decision.action:
-            return f"{result.get('check')}: {result.get('reason')}"
-    return f"{decision.action} by {decision.blocked_by or 'the control layer'}"
 
 
 def handoff_prompt(request: str, analyst_answer: str) -> str:
@@ -236,18 +197,18 @@ def run_pipeline(
     analyst_tools: ToolRunner,
     operator_tools_runner: ToolRunner,
     role: str = "clerk",
-    keys: dict[str, str] | None = None,
+    tokens: dict[str, str] | None = None,
     max_steps: int = 6,
     on_step: Callable[[str, Step], None] | None = None,
     on_decision: Callable[[str, dict], None] | None = None,
 ) -> list[AgentRun]:
     """Run the Analyst on the request, then the Operator, limited to `role`'s tools, on the
-    Analyst's answer. `keys` maps "analyst" and "operator" to their control-layer keys; without
+    Analyst's answer. `tokens` maps "analyst" and "operator" to their control-layer JWTs; without
     it both agents run in direct mode."""
-    keys = keys or {}
+    tokens = tokens or {}
     first = run_agent(
         client,
-        analyst(analyst_tools, keys.get("analyst")),
+        analyst(analyst_tools, tokens.get("analyst")),
         model=model,
         prompt=request,
         max_steps=max_steps,
@@ -258,7 +219,7 @@ def run_pipeline(
         return [first]
     second = run_agent(
         client,
-        operator(operator_tools_runner, role, keys.get("operator")),
+        operator(operator_tools_runner, role, tokens.get("operator")),
         model=model,
         prompt=handoff_prompt(request, first.answer),
         max_steps=max_steps,
