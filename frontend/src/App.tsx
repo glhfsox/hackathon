@@ -37,7 +37,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="tabbar">
-        <div className="brand"><span className="brand-name">AEGIS<span className="accent">_</span></span><span className="brand-caption">AI control layer</span></div>
+        <div className="brand"><span className="brand-name">Alpin</span><span className="brand-caption">AI control layer</span></div>
         <nav aria-label="Main navigation">
           {PAGES.map((p) => (
             <a key={p.id} href={`#${p.id}`} className={`tab ${p.id === page ? 'active' : ''}`} aria-current={p.id === page ? 'page' : undefined}>
