@@ -9,43 +9,63 @@ export interface Polled<T> {
 
 /** Calls `load` now, whenever `key` changes, and every `intervalMs` (0: once). */
 export function usePolled<T>(load: () => Promise<T>, intervalMs: number, key = ''): Polled<T> {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [data, setData] = useState<{ key: string; value: T } | null>(null)
+  const [error, setError] = useState<{ key: string; value: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const loadRef = useRef(load)
+  const keyRef = useRef(key)
+  const generation = useRef(0)
+  const pending = useRef(false)
   // Latest loader without restarting the timer on every render.
   useLayoutEffect(() => {
     loadRef.current = load
+    keyRef.current = key
   })
 
   const reload = useCallback(() => {
+    if (pending.current) return
+    pending.current = true
+    const current = ++generation.current
+    const queryKey = keyRef.current
+    setLoading(true)
     loadRef
       .current()
       .then((d) => {
-        setData(d)
+        if (current !== generation.current) return
+        setData({ key: queryKey, value: d })
         setError(null)
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
+      .catch((e: unknown) => {
+        if (current === generation.current) setError({ key: queryKey, value: e instanceof Error ? e.message : String(e) })
+      })
+      .finally(() => {
+        if (current === generation.current) {
+          pending.current = false
+          setLoading(false)
+        }
+      })
+  }, [])
+
+  const invalidate = useCallback(() => {
+    ++generation.current
+    pending.current = false
   }, [])
 
   useEffect(() => {
     reload()
-    if (intervalMs <= 0) return
-    const id = window.setInterval(reload, intervalMs)
-    return () => window.clearInterval(id)
-  }, [reload, intervalMs, key])
+    const id = intervalMs > 0 ? window.setInterval(reload, intervalMs) : undefined
+    return () => {
+      invalidate()
+      if (id !== undefined) window.clearInterval(id)
+    }
+  }, [reload, invalidate, intervalMs, key])
 
-  return { data, error, loading, reload }
-}
-
-export function useClock(): string {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
-  return now.toLocaleTimeString('en-GB')
+  return {
+    data: data?.key === key ? data.value : null,
+    error: error?.key === key ? error.value : null,
+    loading: loading || (data?.key !== key && error?.key !== key),
+    reload,
+  }
 }
 
 export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-GB')

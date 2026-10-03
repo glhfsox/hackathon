@@ -2,7 +2,7 @@ import { getAudit, getHealth, getMetrics } from '../api/client'
 import type { Metrics, Mode, TimelineBucket } from '../api/types'
 import { ActionTag, Pane, Status, TextBar } from '../components/ui'
 import { fmtTime, usePolled } from '../hooks'
-import { RANGES, sinceIso, type Range } from '../ranges'
+import { sinceIso, type TimeRange } from '../ranges'
 
 const POLL_MS = 5000
 const BINS = 12
@@ -40,8 +40,8 @@ function checkModes(metrics: Metrics) {
 }
 
 /** Spread the per-minute buckets over BINS equal slices of the selected window. */
-function binTimeline(timeline: TimelineBucket[], range: Range) {
-  const span = RANGES[range] * 60_000
+function binTimeline(timeline: TimelineBucket[], range: TimeRange) {
+  const span = range.minutes * 60_000
   const start = Date.now() - span
   const bins = Array.from({ length: BINS }, () => ({ blocked: 0, redacted: 0, flagged: 0 }))
   for (const b of timeline) {
@@ -54,16 +54,16 @@ function binTimeline(timeline: TimelineBucket[], range: Range) {
   return bins
 }
 
-function binLabel(i: number, range: Range): string {
+function binLabel(i: number, range: TimeRange): string {
   if (i === BINS - 1) return 'now'
-  const minutes = Math.round((RANGES[range] * (BINS - 1 - i)) / BINS)
+  const minutes = Math.round((range.minutes * (BINS - 1 - i)) / BINS)
   return minutes >= 1440 ? `-${Math.round(minutes / 1440)}d` : minutes >= 60 ? `-${Math.round(minutes / 60)}h` : `-${minutes}m`
 }
 
-export default function Overview({ range }: { range: Range }) {
-  const metrics = usePolled(() => getMetrics(sinceIso(range)), POLL_MS, range)
+export default function Overview({ range }: { range: TimeRange }) {
+  const metrics = usePolled(() => getMetrics(sinceIso(range)), POLL_MS, String(range.minutes))
   const health = usePolled(getHealth, POLL_MS)
-  const feed = usePolled(() => getAudit({ since: sinceIso(range) }, 200), POLL_MS, range)
+  const feed = usePolled(() => getAudit({ since: sinceIso(range) }, 200), POLL_MS, String(range.minutes))
 
   const m = metrics.data
   if (!m) return <Status error={metrics.error} loading={metrics.loading} />
@@ -91,7 +91,7 @@ export default function Overview({ range }: { range: Range }) {
   return (
     <>
       <div className="row" style={{ flex: 1 }}>
-        <Pane title="posture" className="grow" contentClassName="posture">
+        <Pane title="Security posture" className="grow" contentClassName="posture">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '100%' }}>
             <div className="accent bold" style={{ fontSize: 64, lineHeight: '64px' }}>
               {modes.enforcing}/{modes.total}
@@ -100,11 +100,11 @@ export default function Overview({ range }: { range: Range }) {
               <div className="accent bold" style={{ fontSize: 20 }}>
                 checks enforcing
               </div>
-              <div>[{modes.on === modes.total ? 'x' : ' '}] {modes.on}/{modes.total} checks on</div>
-              <div>profile [{m.active_profile}]</div>
+              <div>{modes.on}/{modes.total} checks on</div>
+              <div>profile {m.active_profile}</div>
               {health.data && (
                 <div className={health.data.jev === 'up' ? '' : 'accent'}>
-                  [{health.data.jev === 'up' ? 'x' : ' '}] jev remote {health.data.jev}
+                  jev remote {health.data.jev}
                   {health.data.jev === 'down' && ` · fallback ${health.data.fallback}`}
                 </div>
               )}
@@ -114,7 +114,7 @@ export default function Overview({ range }: { range: Range }) {
             </div>
           </div>
         </Pane>
-        <Pane title="counters" style={{ width: '34%' }}>
+        <Pane title="Request counts" style={{ width: '34%' }}>
           <table>
             <thead>
               <tr>
@@ -144,7 +144,7 @@ export default function Overview({ range }: { range: Range }) {
       </div>
 
       <div className="row" style={{ flex: 1 }}>
-        <Pane title={`threats.${range}`} className="grow">
+        <Pane title={`Threats · last ${range.label}`} className="grow">
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '100%', minHeight: 90 }}>
             {bins.map((b, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
@@ -160,7 +160,7 @@ export default function Overview({ range }: { range: Range }) {
             ))}
           </div>
         </Pane>
-        <Pane title="blocks_by_check" className="grow">
+        <Pane title="Blocks by check" className="grow">
           {blocks.length === 0 && <div className="dim">no blocks in window</div>}
           <table>
             <tbody>
@@ -175,14 +175,14 @@ export default function Overview({ range }: { range: Range }) {
             </tbody>
           </table>
         </Pane>
-        <Pane title="owasp llm top10" className="grow">
+        <Pane title="OWASP LLM Top 10" className="grow">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 16px' }}>
             {OWASP.map((o) => {
               const levels = o.checks.map(modes.level)
               const mark = levels.includes('on') ? '✓' : levels.includes('monitor') ? '~' : ' '
               return (
                 <div key={o.id} title={o.checks.join(', ') || 'not covered by any check'}>
-                  <span className={mark === '✓' ? 'bright' : mark === '~' ? 'accent' : 'dim'}>[{mark}]</span>{' '}
+                  <span className={mark === '✓' ? 'bright' : mark === '~' ? 'accent' : 'dim'}>{mark === ' ' ? '–' : mark}</span>{' '}
                   <span className={mark === ' ' ? 'dim' : ''}>
                     {o.id}:{o.label}
                   </span>
@@ -194,7 +194,7 @@ export default function Overview({ range }: { range: Range }) {
       </div>
 
       <div className="row" style={{ flex: 1 }}>
-        <Pane title="tail -f threats.log" className="grow">
+        <Pane title="Recent threats" className="grow">
           <Status error={feed.error} loading={feed.loading && !feed.data} />
           {threats.length === 0 && feed.data && <div className="dim">no threats in window</div>}
           {threats.map((r, i) => (
@@ -211,7 +211,7 @@ export default function Overview({ range }: { range: Range }) {
           ))}
         </Pane>
         <div className="col" style={{ width: 380 }}>
-          <Pane title="latency p50/p95 ms" className="grow">
+          <Pane title="Latency · p50 / p95 (ms)" className="grow">
             {latency.map(([check, p]) => (
               <div key={check} style={{ display: 'flex', gap: 8 }}>
                 <span className="dim" style={{ width: 120 }}>
@@ -224,7 +224,7 @@ export default function Overview({ range }: { range: Range }) {
               </div>
             ))}
           </Pane>
-          <Pane title="budget today" className="grow">
+          <Pane title="Budget today" className="grow">
             {Object.entries(m.budget_by_caller).map(([caller, b]) => {
               const used = b.tokens_limit ? b.tokens_today / b.tokens_limit : 0
               return (

@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { auditExportUrl, getAudit } from '../api/client'
-import { ACTIONS, CHECKPOINTS, type Action, type AuditFilters, type AuditRecord, type Checkpoint } from '../api/types'
+import SplitPane from '../components/SplitPane'
+import { sinceIso, type TimeRange } from '../ranges'
+import { getAudit } from '../api/client'
+import { CHECKPOINTS, type AuditRecord } from '../api/types'
 import { ActionTag, Pane, Status, TextBar } from '../components/ui'
 import { fmtTime, shortId, usePolled } from '../hooks'
 
@@ -20,7 +22,7 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
         if (!results.length && !sum) {
           return (
             <div key={cp} className="dim" style={{ marginTop: 8 }}>
-              ▸ {cp} [not reached]
+              ▸ {cp} — not reached
             </div>
           )
         }
@@ -29,7 +31,7 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
           <div key={cp} style={{ marginTop: 8 }}>
             <div>
               ▾ <span className={action === 'allow' ? 'bright' : 'accent'}>{cp}</span>{' '}
-              <span className={action === 'allow' ? 'dim' : 'accent'}>[{action.toUpperCase()}]</span>{' '}
+              <span className={action === 'allow' ? 'dim' : 'accent'}>{action.toUpperCase()}</span>{' '}
               {sum && <span className="dim">({sum.latency_ms.toFixed(0)}ms)</span>}
             </div>
             {results.map((r, i) => (
@@ -61,64 +63,20 @@ function Trace({ requestId, rows }: { requestId: string; rows: AuditRecord[] }) 
   )
 }
 
-export default function AuditLog() {
-  const [filters, setFilters] = useState<AuditFilters>({})
-  const [showSummary, setShowSummary] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
-  const audit = usePolled(() => getAudit(filters, PAGE_SIZE), POLL_MS, JSON.stringify(filters))
-
-  const set = (key: keyof AuditFilters, value: string) =>
-    setFilters((f) => ({ ...f, [key]: value || undefined }))
+export default function AuditLog({ range }: { range: TimeRange }) {
+  const [selection, setSelected] = useState<{ id: string; key: string } | null>(null)
+  const queryKey = String(range.minutes)
+  const audit = usePolled(() => getAudit({ since: sinceIso(range) }, PAGE_SIZE), POLL_MS, queryKey)
+  const selected = selection?.key === queryKey ? selection.id : null
 
   const items = audit.data?.items ?? []
-  const visible = showSummary ? items : items.filter((r) => r.check !== 'turn_summary')
+  const visible = items.filter((r) => r.check !== 'turn_summary')
   const total = audit.data?.total ?? 0
 
   return (
     <>
-      <Pane title="filters" style={{ flexShrink: 0 }} contentClassName="filters">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <label>
-            <span className="accent">caller=</span>
-            <input className="field" size={12} value={filters.caller_id ?? ''} onChange={(e) => set('caller_id', e.target.value)} />
-          </label>
-          <label>
-            <span className="accent">check=</span>
-            <input className="field" size={12} value={filters.check ?? ''} onChange={(e) => set('check', e.target.value)} />
-          </label>
-          <label>
-            <span className="accent">action=</span>
-            <select className="field" value={filters.action ?? ''} onChange={(e) => set('action', e.target.value as Action)}>
-              <option value="">*</option>
-              {ACTIONS.map((a) => (
-                <option key={a}>{a}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="accent">checkpoint=</span>
-            <select className="field" value={filters.checkpoint ?? ''} onChange={(e) => set('checkpoint', e.target.value as Checkpoint)}>
-              <option value="">*</option>
-              {CHECKPOINTS.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-          <label className="dim">
-            <input type="checkbox" checked={showSummary} onChange={(e) => setShowSummary(e.target.checked)} /> turn_summary
-          </label>
-          <span className="accent">|</span>
-          <a className="btn" href={auditExportUrl(filters, 'csv')}>
-            [e]xport csv
-          </a>
-          <a className="btn" href={auditExportUrl(filters, 'json')}>
-            [j]son
-          </a>
-        </div>
-      </Pane>
-
-      <div className="row grow">
-        <Pane title={`audit.log (${total})`} style={{ flex: 2 }} contentClassName="flush">
+      <SplitPane className="grow" label="Resize audit trace" initial={0.65} minFirst={260} minSecond={200} first={
+        <Pane title={`Audit log (${total})`} className="grow" contentClassName="flush">
           <Status error={audit.error} loading={audit.loading && !audit.data} />
           <table className="log" style={{ fontSize: 12.5 }}>
             <thead>
@@ -142,7 +100,7 @@ export default function AuditLog() {
                   <tr
                     key={`${r.ts}-${i}`}
                     className={r.request_id && r.request_id === selected ? 'sel' : ''}
-                    onClick={() => r.request_id && setSelected(r.request_id)}
+                    onClick={() => r.request_id && setSelected({ id: r.request_id, key: queryKey })}
                     title={r.reason}
                   >
                     <td className={`num ${system ? 'accent' : 'dim'}`}>{system ? '!' : total - items.indexOf(r)}</td>
@@ -174,10 +132,11 @@ export default function AuditLog() {
             </div>
           )}
         </Pane>
-        <Pane title={selected ? `trace ${shortId(selected)}` : 'trace'} className="grow" style={{ background: '#000' }}>
+      } second={
+        <Pane title={selected ? `Decision trace ${shortId(selected)}` : 'Decision trace'} className="grow" style={{ background: '#000' }}>
           {selected ? <Trace requestId={selected} rows={items} /> : <div className="dim">// select a row to see its decision trace</div>}
         </Pane>
-      </div>
+      } />
     </>
   )
 }

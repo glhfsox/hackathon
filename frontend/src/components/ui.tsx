@@ -10,7 +10,7 @@ export function Pane(props: {
 }) {
   return (
     <section className={`pane ${props.className ?? ''}`} style={props.style}>
-      <div className="pane-title">{props.title}</div>
+      <h2 className="pane-title">{props.title}</h2>
       <div className={`pane-content ${props.contentClassName ?? ''}`}>{props.children}</div>
     </section>
   )

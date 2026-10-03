@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { chat, PLAYGROUND_MODEL } from '../api/client'
 import type { ChatMessage, ControlTrace, Decision } from '../api/types'
 import { ActionTag, Pane, TextBar } from '../components/ui'
+import SplitPane from '../components/SplitPane'
 
 // Attack prompts for the demo. What happens to them is decided by the backend, not here.
 const PRESETS: Record<string, string> = {
@@ -104,15 +105,22 @@ export default function Playground() {
   const current = selected !== null ? turns[selected] : undefined
 
   return (
-    <>
-      <div className="row grow">
-        <Pane title="transcript.repl" className="grow">
+    <SplitPane className="grow" label="Resize prompt" direction="vertical" initial={0.76} minFirst={180} minSecond={120} first={
+      <SplitPane className="grow" label="Resize playground trace" initial={0.65} minFirst={240} minSecond={220} first={
+        <Pane title="Conversation" className="grow">
           {!keySet && (
             <div className="error-text" style={{ marginBottom: 12 }}>
               E VITE_PLAYGROUND_API_KEY is not set: the proxy will answer 401. See frontend/.env.example.
             </div>
           )}
-          {turns.length === 0 && <div className="dim">// type a prompt below or pick a :preset</div>}
+          {turns.length === 0 && (
+            <div className="workspace-welcome">
+              <span className="accent">PLAYGROUND</span>
+              <h1>Inspect every interaction.</h1>
+              <p>Write a prompt below or try a preset. Select a reply to explore its security checks and decision trace.</p>
+              <div className="workspace-flow"><span>01 prompt</span><span aria-hidden="true">→</span><span>02 checks</span><span aria-hidden="true">→</span><span>03 decision</span></div>
+            </div>
+          )}
           {turns.map((t, i) => {
             const decisions = t.control?.decisions ?? []
             const blockedBy = decisions.find((d) => d.action === 'block')
@@ -148,10 +156,10 @@ export default function Playground() {
           })}
           <div ref={end} />
         </Pane>
-
-        <div className="col" style={{ width: 400 }}>
-          <Pane title="decision.trace" style={{ flex: 2 }}>
-            {!current?.control && <div className="dim">// select a message</div>}
+      } second={
+        <SplitPane className="grow" label="Resize decision trace" direction="vertical" initial={0.65} minFirst={100} minSecond={80} first={
+          <Pane title="Decision trace" className="grow">
+            {!current?.control && <div className="trace-empty"><span className="bright">Awaiting a decision</span><p>Check results, risk scores and reasons appear here when a selected reply includes a trace.</p></div>}
             {current?.control?.decisions.map((d, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
                 <div className={d.action === 'allow' ? 'bright' : 'accent'}>
@@ -178,26 +186,32 @@ export default function Playground() {
               </div>
             ))}
           </Pane>
-          <Pane title="control.json" className="grow">
-            <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap' }} className="dim">
-              {current?.control ? JSON.stringify(current.control, null, 2) : '{}'}
-            </pre>
+        } second={
+          <Pane title="Control payload" className="grow">
+            {current?.control ? (
+              <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap' }} className="dim">{JSON.stringify(current.control, null, 2)}</pre>
+            ) : <div className="trace-empty dim">The selected reply’s control payload will appear here.</div>}
           </Pane>
-        </div>
-      </div>
-
-      <form className="cmdline" style={{ margin: '-10px -8px -8px', borderTop: '1px solid var(--line)' }} onSubmit={onSubmit}>
-        <label style={{ display: 'flex', flex: 1, alignItems: 'center' }}>
-          user&gt;
-          <input
-            aria-label="prompt"
+        } />
+      } />
+    } second={
+      <form className="prompt-composer" onSubmit={onSubmit}>
+        <label className="prompt-label" htmlFor="playground-prompt">user&gt;</label>
+          <textarea
+            id="playground-prompt"
+            aria-label="Prompt"
             value={input}
             disabled={busy}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={busy ? 'waiting for the layer…' : ''}
-            style={{ flex: 1, marginLeft: 8, background: 'transparent', border: 0, outline: 'none', caretColor: 'var(--accent)' }}
+            placeholder={busy ? 'waiting for the layer…' : 'Write a prompt… Enter for a new line'}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void send(input)
+              }
+            }}
           />
-        </label>
+        <div className="prompt-actions">
         <span className="dim" style={{ fontSize: 11 }}>
           caller:<span className="accent">playground</span> model:<span className="bright">{PLAYGROUND_MODEL}</span> · :preset{' '}
           {Object.keys(PRESETS).map((p, i) => (
@@ -209,7 +223,10 @@ export default function Playground() {
             </span>
           ))}
         </span>
+        <span className="dim prompt-shortcut">Ctrl/⌘+Enter</span>
+        <button className="btn send-prompt" type="submit" disabled={busy || !input.trim()}>{busy ? 'Sending…' : 'Send'}</button>
+        </div>
       </form>
-    </>
+    } />
   )
 }
