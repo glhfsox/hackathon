@@ -92,7 +92,7 @@ The client scope is set by the operator outside the tool arguments, so the model
 
 ### User roles
 
-The human who sends the request has a role, chosen with `--role` (default `clerk`). The role decides which Operator tools exist for the run. The Analyst is the same for every role.
+The human who sends the request has a role, chosen with `--role` (default: the scenario's role, or `clerk` for a free-form request). The role decides which Operator tools exist for the run. The Analyst is the same for every role.
 
 | Role | Operator tools | Meant for |
 |------|----------------|-----------|
@@ -103,7 +103,7 @@ The test application enforces the role itself: the Operator is not offered the o
 
 ### Policy entries for the test application
 
-Add these under the existing top-level keys of `policy.yaml`. The `gemma4` model is already declared in the shipped file.
+These callers ship in `backend/policy.yaml`. Copy the pattern for your own agents.
 
 ```yaml
 callers:
@@ -134,7 +134,7 @@ checks:
     max_command_chars: 2000
 ```
 
-Then set the keys in the environment before you start the proxy and the agents:
+Then set the keys in the environment before you start the proxy and the agents. With Docker, `docker compose run --rm init` writes them to `.env` for you:
 
 ```sh
 export ANALYST_API_KEY=<random secret>
@@ -142,7 +142,7 @@ export OPERATOR_CLERK_API_KEY=<another random secret>
 export OPERATOR_TREASURER_API_KEY=<a third random secret>
 ```
 
-The application picks the Operator key that matches the user's role. The Analyst has one key for every role, because it only reads.
+In proxy mode (`TEST_APP_PROXY_URL` set) the application picks the Operator key that matches the user's role. The Analyst has one key for every role, because it only reads.
 
 With this policy:
 
