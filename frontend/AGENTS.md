@@ -23,6 +23,9 @@ Run from `frontend/`:
 
 ```bash
 npm run lint && npm run build
+npm run dev        # http://localhost:5173 (the only origin the backend's CORS allows)
 ```
 
-The dev server command and backend URL variable are set when the frontend is first scaffolded. Update this section then.
+Settings live in `.env.local` (names in `.env.example`): `VITE_API_URL` (default `http://localhost:8000`), `VITE_PLAYGROUND_API_KEY` (must equal the backend's `PLAYGROUND_API_KEY`), `VITE_PLAYGROUND_MODEL` (default `gemma4`).
+
+Known issue: Vite 8 (rolldown) cannot resolve `node_modules` when the project path contains non-ASCII characters (e.g. a Cyrillic folder name). Work from an ASCII path.
