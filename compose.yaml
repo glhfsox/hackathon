@@ -1,9 +1,12 @@
 # The AI Control Layer, its dashboard and the test application, for judges and local demos.
 # Ollama runs on the host (see README.md). Quick start:
-#   docker compose run --rm init          # once: writes .env with random API keys
 #   docker compose up -d --build          # backend on :8000, dashboard on :5173
 #   docker compose run --rm test-app --scenario all
+# JWT_SECRET defaults to a public demo value so `up` works with no setup. For anything beyond a
+# local demo, set your own: `docker compose run --rm init` writes a random one to .env.
 name: ai-control-layer
+
+x-jwt-secret: &jwt-secret ${JWT_SECRET:-hackyeah-demo-only-jwt-secret-change-me}
 
 services:
   # Owns the network namespace the backend lives in. policy.yaml points at Ollama on
@@ -26,6 +29,8 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      JWT_SECRET: *jwt-secret
     volumes:
       # Mounted so hot reload, dashboard saves and audit logs use the files in this checkout.
       - ./backend/policy.yaml:/app/backend/policy.yaml
@@ -42,8 +47,9 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        # Baked into the bundle at build time: rebuild after changing the key in .env.
-        VITE_PLAYGROUND_API_KEY: ${PLAYGROUND_API_KEY:-}
+        # The playground's token is minted from JWT_SECRET and baked into the bundle at build
+        # time: rebuild after changing the secret.
+        JWT_SECRET: *jwt-secret
     ports:
       - "127.0.0.1:5173:5173"
     depends_on: [backend]
@@ -58,6 +64,7 @@ services:
         required: false
     environment:
       TEST_APP_PROXY_URL: http://net:8000/v1
+      JWT_SECRET: *jwt-secret
     volumes:
       - ./test_app/runs:/app/test_app/runs
     depends_on:
