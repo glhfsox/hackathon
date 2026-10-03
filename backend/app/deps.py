@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.proxy import ProxyService
 from app.protocols.judge import Judge
 from app.protocols.policy_provider import PolicyProvider
 from app.protocols.upstream import Upstream
@@ -30,6 +31,12 @@ def get_judge(request: Request) -> Judge:
     return _configured(judge, "judge")
 
 
+def get_proxy_service(request: Request) -> ProxyService:
+    service: ProxyService | None = getattr(request.app.state, "proxy_service", None)
+    return _configured(service, "proxy service")
+
+
 PolicyProviderDep = Annotated[PolicyProvider, Depends(get_policy_provider)]
+ProxyServiceDep = Annotated[ProxyService, Depends(get_proxy_service)]
 UpstreamDep = Annotated[Upstream, Depends(get_upstream)]
 JudgeDep = Annotated[Judge, Depends(get_judge)]
