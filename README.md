@@ -6,7 +6,7 @@
 client = OpenAI(base_url="http://localhost:8000/v1", api_key=user_jwt)  # the whole integration
 ```
 
-![Dashboard overview: security posture, threats over time, blocks by check, OWASP LLM Top 10 coverage](docs/screenshots/overview.png)
+![Dashboard overview: security posture, request counts, threats over time, blocks by check, recent threats and response time](docs/screenshots/overview.png)
 
 **Read next:** [the pitch](docs/pitch.md) · [architecture](docs/architecture.md) · [configuration guide](docs/configuration.md) · [API contracts](contracts/README.md)
 
@@ -21,6 +21,16 @@ docker compose run --rm test-app --scenario all    # attacks a two-agent treasur
 ```
 
 Then open the dashboard at **<http://localhost:5173>** and watch the decisions arrive on the **Live** tab.
+
+## The dashboard in one minute
+
+| Tab | What it answers |
+|---|---|
+| **Overview** | Is the system safe right now? Shows enforcing checks, allowed / redacted / blocked counts, threats over time, which checks block most, response time as median and 95th percentile in ms (security vs. model), and today's tokens and cost per user. |
+| **Live** | What is happening this second? Each agent step is a card: checks before the model, what the model asked for, checks on its reply, and the timing. |
+| **Audit** | Why was this decided? Rows are grouped by request. Rule checks show *Passed / Redacted / Blocked*, and Jev shows its risk score. Selecting a request opens its decision trace with the total cost. |
+| **Policy** | What are the rules? A live YAML editor that validates before saving, plus the active-checks matrix and the Jev threshold. |
+| **Playground** | What happens if I try to attack it? Chat through the layer (Enter to send) with attack presets and see every check's verdict. The conversation is kept while you switch tabs. |
 
 ## How it works
 
@@ -54,14 +64,14 @@ flowchart LR
 - **Policy is the only source of behaviour.** Everything lives in one YAML file. It is validated and hot-reloaded, and a bad edit is rejected while the old policy keeps running.
 - **Agents don't crash.** A blocked request gets a normal OpenAI-format reply that explains why.
 
-## What the judges can see
+## Screens
 
 | | |
 |---|---|
-| ![Live view](docs/screenshots/live.png) | **Live.** Every agent step as it happens: the checks before the model, what the model asked for, the checks on its reply, and where the time went. |
-| ![Audit log](docs/screenshots/audit.png) | **Audit.** The append-only log of every decision. Select a row to see the request's full decision trace. Export it as JSON or CSV. |
-| ![Policy editor](docs/screenshots/policy.png) | **Policy.** Edit the live policy in the browser. It is validated before it is applied, and a broken edit is rejected with field-level errors. |
-| ![Playground](docs/screenshots/playground.png) | **Playground.** Chat through the layer with built-in attack presets, and see which checks fired and why. |
+| ![Live view](docs/screenshots/live.png) | **Live.** Agent steps as they happen. A `run_sql` call with `DELETE` and no `WHERE` is blocked by `tool_args` before the agent can run it. |
+| ![Audit log](docs/screenshots/audit.png) | **Audit.** Decisions grouped by request. The selected request's trace shows which check blocked it, why, and what the request cost. |
+| ![Policy editor](docs/screenshots/policy.png) | **Policy.** The live policy in the browser. It is validated before it is applied, and a broken edit is rejected with field-level errors. |
+| ![Playground](docs/screenshots/playground.png) | **Playground.** A prompt injection stopped at the input checkpoint by `signatures`. The model is never called. |
 
 The screenshots use sample data that mirrors a `test-app --scenario all` run. To regenerate them, see [Screenshots](#screenshots).
 
