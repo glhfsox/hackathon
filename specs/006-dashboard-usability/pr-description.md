@@ -1,0 +1,5 @@
+Playground conversations previously disappeared when switching dashboard tabs. Keep its state and pending replies alive across navigation, and send prompts with Enter (Shift+Enter inserts a newline).
+
+Make overview metrics readable by removing the OWASP panel and showing explained median/95th-percentile timings in milliseconds, and daily token/cost totals instead of unknown limits displayed as infinity. Group audit rows by request, show categorical rule outcomes while retaining AI score bars, and highlight recorded request and checkpoint costs. Overview panels scroll as a whole to fit the longer labels and tables.
+
+Validation: frontend lint and production build passed; all nine Playwright tests passed on isolated port 5174, covering completed/pending navigation, safe history, keyboard behavior, metric presentation, execution groups and cost. Screenshots reviewed. No new dependencies, environment variables, migrations, or backend changes. Preservation lasts for the current page session; reload clears it. Cost uses loaded summary rows, labeled accordingly. Existing React margin shorthand warning observed in playground selection styling.

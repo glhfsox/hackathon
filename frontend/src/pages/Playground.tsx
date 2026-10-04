@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { chat, PLAYGROUND_MODEL } from '../api/client'
 import type { ChatMessage, ControlTrace, Decision } from '../api/types'
-import { ActionTag, Pane, TextBar } from '../components/ui'
+import { ActionTag, CheckOutcome, Pane } from '../components/ui'
 import SplitPane from '../components/SplitPane'
 
 // Attack prompts for the demo. What happens to them is decided by the backend, not here.
@@ -56,7 +56,7 @@ function Highlighted({ text }: { text: string }) {
   )
 }
 
-export default function Playground() {
+export default function Playground({ active }: { active: boolean }) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -65,8 +65,8 @@ export default function Playground() {
   const keySet = Boolean(import.meta.env.VITE_PLAYGROUND_API_KEY)
 
   useEffect(() => {
-    end.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [turns])
+    if (active) end.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [turns, active])
 
   const send = async (text: string) => {
     if (!text.trim() || busy) return
@@ -171,10 +171,9 @@ export default function Playground() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }} className="dim">
                         <span className={r.check === d.blocked_by ? 'accent bold' : ''}>{r.check}</span>
                         <span>
-                          <ActionTag action={r.action} /> <span className={r.score >= 0.5 ? 'accent' : ''}>{r.score.toFixed(2)}</span>
+                          <CheckOutcome {...r} />
                         </span>
                       </div>
-                      <TextBar value={r.score} className={r.action === 'allow' ? 'dim' : 'accent'} />
                       {r.action !== 'allow' && (
                         <div className="dim" style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>
                           {r.reason}
@@ -203,9 +202,9 @@ export default function Playground() {
             value={input}
             disabled={busy}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={busy ? 'waiting for the layer…' : 'Write a prompt… Enter for a new line'}
+            placeholder={busy ? 'waiting for the layer…' : 'Write a prompt… Enter to send, Shift+Enter for a new line'}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 void send(input)
               }
@@ -223,7 +222,7 @@ export default function Playground() {
             </span>
           ))}
         </span>
-        <span className="dim prompt-shortcut">Ctrl/⌘+Enter</span>
+        <span className="dim prompt-shortcut">Enter to send · Shift+Enter for a new line</span>
         <button className="btn send-prompt" type="submit" disabled={busy || !input.trim()}>{busy ? 'Sending…' : 'Send'}</button>
         </div>
       </form>

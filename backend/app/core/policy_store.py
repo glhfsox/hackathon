@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import hashlib
 import logging
 import os
@@ -185,7 +186,12 @@ def _enabled_summary(policy: Policy) -> str:
 
 def _atomic_write(path: Path, text: str) -> None:
     """Write through a temp file in the same directory and os.replace it over the target, so a
-    reader (the poll loop, an editor) sees the old file or the new one, never half of one."""
+    reader (the poll loop, an editor) sees the old file or the new one, never half of one.
+
+    A file mounted into a container on its own (a Docker single-file bind mount) cannot be
+    renamed over: os.replace fails with EBUSY. Then the content is written through the mount
+    instead, which the host sees too. That is not atomic, but nothing can read the file between
+    the write and the swap of the snapshot: both run on the event loop with no await between."""
     data = text.encode("utf-8")
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
@@ -194,10 +200,26 @@ def _atomic_write(path: Path, text: str) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        try:
+            os.replace(tmp, path)
+        except OSError as exc:
+            if exc.errno not in (errno.EBUSY, errno.EXDEV):
+                raise
+            log.info("policy file %s cannot be replaced (%s): writing it in place", path, exc)
+            _write_in_place(path, data)
     finally:
         # After a successful replace the temp name is gone; after a failure this cleans it up.
         tmp.unlink(missing_ok=True)
+
+
+def _write_in_place(path: Path, data: bytes) -> None:
+    """Overwrite the file's content without replacing the file. The new content is written
+    before the file is cut to its length, so the file is never empty."""
+    with path.open("r+b") as f:
+        f.write(data)
+        f.truncate()
+        f.flush()
+        os.fsync(f.fileno())
 
 
 class PolicyStore:

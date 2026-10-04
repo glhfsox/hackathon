@@ -132,7 +132,7 @@ test('prompt stays multiline and usable after resizing and viewport changes', as
   await page.goto('/#playground')
   const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
   await prompt.fill('First line')
-  await prompt.press('Enter')
+  await prompt.press('Shift+Enter')
   await prompt.press('End')
   await prompt.press('a')
   await expect(prompt).toHaveValue('First line\na')
@@ -156,10 +156,15 @@ test('multiline prompt sends with shortcut and button and retains safe history',
   const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
   await prompt.fill('First line\nSecond line')
   const first = page.waitForRequest('http://localhost:8000/v1/chat/completions')
-  await prompt.press('Control+Enter')
+  await prompt.press('Enter')
   expect((await first).postDataJSON().messages).toEqual([{ role: 'user', content: 'First line\nSecond line' }])
   await expect(prompt).toBeEnabled()
   await expect(prompt).toHaveValue('')
+  await prompt.fill('Draft follow-up')
+  await page.locator('nav a[href="#audit"]').click()
+  await page.locator('nav a[href="#playground"]').click()
+  await expect(prompt).toHaveValue('Draft follow-up')
+  await expect(page.getByText('assistant> Received the prompt.')).toBeVisible()
   await prompt.fill('Follow-up')
   const second = page.waitForRequest('http://localhost:8000/v1/chat/completions')
   await page.getByRole('button', { name: 'Send', exact: true }).click()
@@ -169,4 +174,82 @@ test('multiline prompt sends with shortcut and button and retains safe history',
     { role: 'user', content: 'Follow-up' },
   ])
   await expect(page.getByText('checkpoint: output', { exact: false })).toBeVisible()
+})
+
+test('pending replies survive navigation and blocked turns stay out of history', async ({ page }) => {
+  let release = () => {}
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  let calls = 0
+  await page.route('http://localhost:8000/v1/chat/completions', async (route) => {
+    calls += 1
+    if (calls === 1) await pending
+    await route.fulfill({ json: {
+      choices: [{ message: { role: 'assistant', content: calls === 1 ? 'Blocked test prompt.' : 'Safe reply.' } }],
+      control: { request_id: `pending-${calls}`, decisions: [{ checkpoint: 'input', action: calls === 1 ? 'block' : 'allow', blocked_by: calls === 1 ? 'signatures' : null, results: [] }] },
+    } })
+  })
+  await page.goto('/#playground')
+  const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
+  await prompt.fill('Blocked prompt')
+  const sent = page.waitForRequest('http://localhost:8000/v1/chat/completions')
+  await prompt.press('Enter')
+  await sent
+  await page.locator('nav a[href="#audit"]').click()
+  release()
+  await page.locator('nav a[href="#playground"]').click()
+  await expect(page.getByText('Blocked test prompt.', { exact: true })).toBeVisible()
+  await expect(prompt).toBeEnabled()
+  await prompt.fill('Safe follow-up')
+  const followUp = page.waitForRequest('http://localhost:8000/v1/chat/completions')
+  await prompt.press('Enter')
+  expect((await followUp).postDataJSON().messages).toEqual([{ role: 'user', content: 'Safe follow-up' }])
+  await expect(page.getByText('Blocked test prompt.', { exact: true })).toBeVisible()
+})
+
+test('overview explains independent timings and daily usage', async ({ page }) => {
+  await page.route('http://localhost:8000/api/metrics?**', async (route) => {
+    await route.fulfill({ json: { ...metrics,
+      enabled_checks: { jev: { input: 'block' } },
+      latency_ms_by_check: { jev: { p50: 32, p95: 84 } },
+      budget_by_caller: { analyst: { tokens_today: 1200, tokens_limit: 0, cost_today: 0.0123, cost_limit: 0 } },
+      request_latency_ms: { ...metrics.request_latency_ms, total: { p50: 400, p95: 900 } },
+    } })
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Response time', exact: true })).toBeVisible()
+  await expect(page.getByText('400.0 ms', { exact: true })).toBeVisible()
+  await expect(page.getByText('900.0 ms', { exact: true })).toBeVisible()
+  await expect(page.getByText('Budget limits are unavailable', { exact: false })).toBeVisible()
+  await expect(page.getByText('$0.0123', { exact: true })).toBeVisible()
+  await expect(page.getByText('∞', { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: /OWASP/ })).toHaveCount(0)
+  await page.locator('.overview-workspace').evaluate((element) => { element.scrollTop = 0 })
+  await page.screenshot({ path: 'test-results/overview-usability.png' })
+  await page.locator('.overview-workspace').evaluate((element) => { element.scrollTop = element.scrollHeight })
+  await page.screenshot({ path: 'test-results/overview-metrics.png' })
+})
+
+test('audit separates interleaved requests and highlights summary cost', async ({ page }) => {
+  const base = { ts: '2026-10-04T00:00:00Z', caller_id: 'analyst', model: 'demo', checkpoint: 'input', action: 'allow', reason: 'Allowed', score: 0, latency_ms: 1, decided_by: 'rules', tokens: 0, cost: 0, policy_version: 'test', conversation_id: null, step: null, tools: null, overhead_ms: null, upstream_latency_ms: null, blocked_by: null }
+  const items = [
+    { ...base, id: 6, request_id: 'request-a', check: 'permissions', cost: 0.2 },
+    { ...base, id: 5, request_id: 'request-b', check: 'signatures', action: 'block', score: 1 },
+    { ...base, id: 4, request_id: 'request-a', check: 'jev', checkpoint: 'output', decided_by: 'fallback', score: 0.25 },
+    { ...base, id: 3, request_id: 'request-a', check: 'turn_summary', checkpoint: 'output', tokens: 50, cost: 0.012345 },
+    { ...base, id: 2, request_id: 'request-a', check: 'turn_summary' },
+    { ...base, id: 1, request_id: null, checkpoint: null, check: 'policy_loaded' },
+  ]
+  await page.route('http://localhost:8000/api/audit?**', async (route) => route.fulfill({ json: { total: items.length, items } }))
+  await page.goto('/#audit')
+  await expect(page.locator('.audit-execution')).toHaveCount(3)
+  const first = page.locator('.audit-execution').first()
+  await expect(first.locator('tr')).toHaveCount(3)
+  await expect(first).toContainText('✓ Passed')
+  await expect(first.locator('.risk-score')).toContainText('0.25')
+  await expect(first.locator('.rule-outcome')).not.toContainText('0.00')
+  await first.getByText('permissions', { exact: true }).click()
+  await expect(page.locator('.audit-cost strong')).toHaveText('$0.012345')
+  await expect(page.locator('.audit-cost')).toContainText('50 tokens')
+  await expect(page.locator('.audit-cost strong')).toHaveCSS('color', 'rgb(224, 123, 57)')
+  await page.screenshot({ path: 'test-results/audit-usability.png' })
 })

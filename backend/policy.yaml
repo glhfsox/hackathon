@@ -139,7 +139,7 @@ checks:
   #   max_judge_calls  cap on chunks per request (1..1024); above it the check errors (fails closed)
   #   max_concurrency  most judge calls run in parallel (1..64)
   jev:
-    timeout_s: 40
+    timeout_s: 30
     max_chars: 4000
     max_judge_calls: 128
     max_concurrency: 8
