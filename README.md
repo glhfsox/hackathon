@@ -89,6 +89,8 @@ The submission screenshots use sample data illustrating a `test-app --scenario a
 
 ## Try it: attack scenarios
 
+For an interactive test, open the dashboard at <http://localhost:5173> and select **Playground**. Send your own prompts or use the attack presets to see which requests are allowed, redacted or blocked, which checks fired, and why.
+
 `test_app` is a two-agent treasury application. The **Analyst** reads payments and documents, and the **Operator** acts on the Analyst's answer. Each agent has its own JWT, and every tool call in a model reply is checked before the agent sees it, so a blocked tool never runs.
 
 ```sh
