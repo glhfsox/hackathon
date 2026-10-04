@@ -4,7 +4,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 ## 1. Project
 
-**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](docs/architecture.md). Data shapes and endpoints: [`contracts/`](contracts/README.md).
+**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](5-implementation/docs/architecture.md). Data shapes and endpoints: [`contracts/`](5-implementation/contracts/README.md).
 
 - **Rules enforce, Jev decides.** Deterministic rule checks are hard limits, and a rule block is final. **Jev** is the AI decision maker, a remote (non-local) LLM. Jev scores what the rules let through, and the score is compared against a policy threshold. If Jev is unavailable, the request goes to local Ollama model
 - **Policy is the only source of behaviour.** It is one YAML file, validated on load and hot-reloaded. An invalid edit is rejected and the old policy stays active. Nothing is hard-coded. Judges will edit the policy while the system runs.
@@ -13,7 +13,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 ## 2. How it works
 
-Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
+Summary only. If this section and [`docs/architecture.md`](5-implementation/docs/architecture.md) disagree, the architecture doc wins.
 
 - **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and sends a signed JWT as its bearer token, and is protected with no other code changes. The user and their roles come from the token, and the policy maps roles to tools (see architecture §11). An agent that ignores our verdict and runs a blocked tool anyway is not stopped by the layer.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
@@ -49,12 +49,16 @@ Summary only. If this section and [`docs/architecture.md`](docs/architecture.md)
 AGENTS.md            Rules for every agent (this file). CLAUDE.md = "@AGENTS.md".
 .specify/            spec-kit: memory/constitution.md (principles only, no tech),
                      templates/, scripts/, integration.json.
-docs/architecture.md The single description of stack, data model and design.
-contracts/           API shapes and schemas. The one source of truth for backend and frontend.
-specs/NNN-<name>/    One folder per feature: spec.md (what/why), plan.md (how), tasks.md.
-backend/             Backend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
-frontend/            Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
 .claude/, .github/   spec-kit commands for Claude Code and Copilot.
+1-solution/ … 4-testing/  Submission write-ups for the judges. They link into 5-implementation.
+5-implementation/    Everything that runs. Paths below are relative to it.
+  compose.yaml       Docker entry point; run `docker compose` from this folder.
+  docs/architecture.md The single description of stack, data model and design.
+  contracts/         API shapes and schemas. The one source of truth for backend and frontend.
+  specs/NNN-<name>/  One folder per feature: spec.md (what/why), plan.md (how), tasks.md.
+  backend/           Backend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+  frontend/          Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+  test_app/, demo_data/  Demo agents and their synthetic data.
 ```
 
 - The root `AGENTS.md`/`CLAUDE.md` load automatically. The `backend/` and `frontend/` rule files load only when working in that folder.

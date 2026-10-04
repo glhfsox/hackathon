@@ -1,6 +1,6 @@
 # Architecture
 
-The single description of the stack, components, data flow and design of the AI Control Layer. Shapes of data and endpoints live in [`contracts/`](../contracts/README.md), not here. Principles live in [`.specify/memory/constitution.md`](../.specify/memory/constitution.md).
+The single description of the stack, components, data flow and design of the AI Control Layer. Shapes of data and endpoints live in [`contracts/`](../contracts/README.md), not here. Principles live in [`.specify/memory/constitution.md`](../../.specify/memory/constitution.md).
 
 Status: **draft v0.1**. The team confirms or changes it through small PRs. Undecided points are marked **OPEN**.
 

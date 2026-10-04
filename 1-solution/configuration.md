@@ -1,6 +1,6 @@
 # Configuration guide
 
-How to set up and configure the AI Control Layer, and what every configuration word means. The design behind it is in [`architecture.md`](architecture.md). This guide is written from `backend/policy.yaml`, `backend/app/models/policy.py`, the checks in `backend/app/checks/`, `compose.yaml` and `.env.example`.
+How to set up and configure the AI Control Layer, and what every configuration word means. The design behind it is in [`architecture.md`](../5-implementation/docs/architecture.md). Paths below are relative to [`5-implementation/`](../5-implementation/). This guide is written from `backend/policy.yaml`, `backend/app/models/policy.py`, the checks in `backend/app/checks/`, `compose.yaml` and `.env.example`.
 
 The layer has three places to configure:
 
@@ -15,6 +15,7 @@ The layer has three places to configure:
 ### With Docker (recommended)
 
 ```bash
+cd 5-implementation                   # compose.yaml lives here
 docker compose run --rm init          # optional: writes .env with a random JWT_SECRET
 # edit .env: set OPENAI_API_KEY (and TYPESAFE_API_KEY if you have one)
 docker compose up -d --build          # backend on :8000, dashboard on :5173

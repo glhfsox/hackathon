@@ -6,15 +6,26 @@ AI Control Layer is an **agent firewall** between AI agents, LLMs, and tools. It
 
 **Redact sensitive data, block injections, inspect the audit trace.**
 
-![Playground redaction and injection blocking, followed by the audit trace](docs/media/playground.gif)
+![Playground redaction and injection blocking, followed by the audit trace](1-solution/media/playground.gif)
 
-**Read next:** [architecture](docs/architecture.md) · [configuration guide](docs/configuration.md) · [API contracts](contracts/README.md)
+## Submission structure
+
+| Folder | Contents |
+|---|---|
+| [`1-solution/`](1-solution/README.md) | Overview of the approach, implemented controls and guardrails, policy configuration |
+| [`2-architecture/`](2-architecture/README.md) | Architecture diagram, performance of deterministic and AI enforcement |
+| [`3-reporting/`](3-reporting/README.md) | Dashboard screenshots, list of implemented metrics |
+| [`4-testing/`](4-testing/README.md) | Test cases and attack scenarios the solution showcases |
+| [`5-implementation/`](5-implementation/README.md) | Code, design considerations, deployment into existing agentic ecosystems |
+
+**Read next:** [architecture](5-implementation/docs/architecture.md) · [configuration guide](1-solution/configuration.md) · [API contracts](5-implementation/contracts/README.md)
 
 ## Run it in 3 commands
 
 You need Docker and an OpenAI API key. The agents' model (`gpt-4o-mini`) and Jev's fallback run at OpenAI.
 
 ```sh
+cd 5-implementation
 cp .env.example .env                               # then put OPENAI_API_KEY (and TYPESAFE_API_KEY) in .env
 docker compose up -d --build                       # control layer on :8000, dashboard on :5173
 docker compose run --rm test-app --scenario all    # attacks a two-agent treasury app through the layer
@@ -68,10 +79,10 @@ flowchart LR
 
 | | |
 |---|---|
-| ![Live view](docs/screenshots/live.png) | **Live.** Agent steps as they happen. A `run_sql` call with `DELETE` and no `WHERE` is blocked by `tool_args` before the agent can run it. |
-| ![Audit log](docs/screenshots/audit.png) | **Audit.** Decisions grouped by request. The selected request's trace shows which check blocked it, why, and what the request cost. |
-| ![Policy editor](docs/screenshots/policy.png) | **Policy.** The live policy in the browser. It is validated before it is applied, and a broken edit is rejected with field-level errors. |
-| ![Playground](docs/screenshots/playground.png) | **Playground.** A prompt injection stopped at the input checkpoint by `signatures`. The model is never called. |
+| ![Live view](3-reporting/screenshots/live.png) | **Live.** Agent steps as they happen. A `run_sql` call with `DELETE` and no `WHERE` is blocked by `tool_args` before the agent can run it. |
+| ![Audit log](3-reporting/screenshots/audit.png) | **Audit.** Decisions grouped by request. The selected request's trace shows which check blocked it, why, and what the request cost. |
+| ![Policy editor](3-reporting/screenshots/policy.png) | **Policy.** The live policy in the browser. It is validated before it is applied, and a broken edit is rejected with field-level errors. |
+| ![Playground](3-reporting/screenshots/playground.png) | **Playground.** A prompt injection stopped at the input checkpoint by `signatures`. The model is never called. |
 
 The screenshots use sample data that mirrors a `test-app --scenario all` run. To regenerate them, see [Screenshots](#screenshots).
 
@@ -98,7 +109,7 @@ A `clerk` may hold payments, send emails and export reports. A `treasurer` may a
 
 ## Change the policy while it runs
 
-All behaviour comes from [backend/policy.yaml](backend/policy.yaml). Edit it in the dashboard's **Policy** tab or in the file. A valid change is in force within about 2 seconds, and an invalid one is rejected while the old policy stays active. Some things to try:
+All behaviour comes from [5-implementation/backend/policy.yaml](5-implementation/backend/policy.yaml). Edit it in the dashboard's **Policy** tab or in the file. A valid change is in force within about 2 seconds, and an invalid one is rejected while the old policy stays active. Some things to try:
 
 - Remove `reports.export` from the `clerk` role under `roles:`, then run `--scenario path_traversal`. The model is no longer offered `export_report`.
 - Lower `jev_threshold` from `0.6` to `0.4` to make Jev stricter.
@@ -108,9 +119,9 @@ All behaviour comes from [backend/policy.yaml](backend/policy.yaml). Edit it in 
 ## Where to look
 
 - Dashboard: <http://localhost:5173>
-- Audit log: `backend/logs/*.jsonl`, or the dashboard export (`GET /api/audit/export`)
+- Audit log: `5-implementation/backend/logs/*.jsonl`, or the dashboard export (`GET /api/audit/export`)
 - Layer health: `curl http://localhost:8000/api/health`
-- Operator actions and reports: `test_app/runs/<time>/<scenario>/`
+- Operator actions and reports: `5-implementation/test_app/runs/<time>/<scenario>/`
 - Stop everything: `docker compose down`
 
 ## Setup notes
@@ -121,13 +132,13 @@ All behaviour comes from [backend/policy.yaml](backend/policy.yaml). Edit it in 
 
 Without Docker:
 
-- Backend: [backend/README.md](backend/README.md)
-- Test application, direct or through the proxy: [test_app/README.md](test_app/README.md)
-- Connecting your own agent: [docs/toolDescription.md](docs/toolDescription.md)
+- Backend: [backend/README.md](5-implementation/backend/README.md)
+- Test application, direct or through the proxy: [5-implementation/test_app/README.md](5-implementation/test_app/README.md)
+- Connecting your own agent: [5-implementation/docs/toolDescription.md](5-implementation/docs/toolDescription.md)
 
 ## Screenshots
 
-[`frontend/tests/screenshots.spec.ts`](frontend/tests/screenshots.spec.ts) writes the images in `docs/screenshots/`. Run it from `frontend/`:
+[`frontend/tests/screenshots.spec.ts`](5-implementation/frontend/tests/screenshots.spec.ts) writes the images in `3-reporting/screenshots/`. Run it from `5-implementation/frontend/`:
 
 ```sh
 npm ci

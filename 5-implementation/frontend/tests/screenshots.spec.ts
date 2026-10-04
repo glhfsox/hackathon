@@ -1,4 +1,4 @@
-// Captures the README screenshots into docs/screenshots/. Skipped unless SCREENSHOTS is set.
+// Captures the README screenshots into 3-reporting/screenshots/ at the repo root. Skipped unless SCREENSHOTS is set.
 //   SCREENSHOTS=1 npx playwright test screenshots            sample data from the test_app scenarios
 //   SCREENSHOTS=live npx playwright test screenshots         the running stack (docker compose up)
 // The sample data mirrors what `test-app --scenario all` produces, so the README does not need
@@ -9,7 +9,7 @@ import { test, type Page } from '@playwright/test'
 const MODE = process.env.SCREENSHOTS
 test.skip(!MODE, 'set SCREENSHOTS=1 (sample data) or SCREENSHOTS=live (running stack)')
 
-const OUT = '../docs/screenshots'
+const OUT = '../../3-reporting/screenshots'
 const CHECKS = ['permissions', 'budget', 'loop_detection', 'signatures', 'tool_args', 'pii_secrets', 'jev']
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
 
