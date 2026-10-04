@@ -1,14 +1,14 @@
 # AI Control Layer
 
-**A security checkpoint between AI agents and everything they touch.** Change one URL, and every prompt, tool call, tool result and answer is checked. The layer decides to **allow, redact or block**, gives a reason, and writes an audit record.
+## Overview
 
-```python
-client = OpenAI(base_url="http://localhost:8000/v1", api_key=user_jwt)  # the whole integration
-```
+AI Control Layer is an **agent firewall** between AI agents, LLMs, and tools. It inspects prompts, tool calls, returned data, and answers to **allow, redact, or block** them, with an audit trail explaining every decision. Agents connect through an OpenAI-compatible proxy by changing their `base_url`.
 
-![Dashboard overview: security posture, request counts, threats over time, blocks by check, recent threats and response time](docs/screenshots/overview.png)
+**Redact sensitive data, block injections, inspect the audit trace.**
 
-**Read next:** [the pitch](docs/pitch.md) · [architecture](docs/architecture.md) · [configuration guide](docs/configuration.md) · [API contracts](contracts/README.md)
+![Playground redaction and injection blocking, followed by the audit trace](docs/media/playground.gif)
+
+**Read next:** [architecture](docs/architecture.md) · [configuration guide](docs/configuration.md) · [API contracts](contracts/README.md)
 
 ## Run it in 3 commands
 
