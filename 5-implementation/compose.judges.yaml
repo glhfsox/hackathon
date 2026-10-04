@@ -1,0 +1,12 @@
+services:
+  backend:
+    environment:
+      POLICY_PATH: /app/backend/policy.judges.yaml
+      OPENAI_API_KEY: ''
+      TYPESAFE_API_KEY: ''
+    volumes:
+    - ./backend/policy.judges.yaml:/app/backend/policy.judges.yaml
+  test-app:
+    environment:
+      OPENAI_API_KEY: ''
+      TYPESAFE_API_KEY: ''

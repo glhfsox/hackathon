@@ -4,7 +4,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 ## 1. Project
 
-**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](docs/architecture.md). Data shapes and endpoints: [`contracts/`](contracts/README.md).
+**AI Control Layer** (HackYeah 2026, Goldman Sachs task, 24 h, team of four). It is middleware that secures interactions between AI agents, models and tools. For everything that crosses those boundaries it decides to **allow, redact or block**. Only the control layer is scored. The agents that use it are demo clients. Design: [`docs/architecture.md`](5-implementation/docs/architecture.md). Data shapes and endpoints: [`contracts/`](5-implementation/contracts/README.md).
 
 - **Rules enforce, Jev decides.** Deterministic rule checks are hard limits, and a rule block is final. **Jev** is the AI decision maker, a remote (non-local) LLM. Jev scores what the rules let through, and the score is compared against a policy threshold. If Jev is unavailable, the request goes to local Ollama model
 - **Policy is the only source of behaviour.** It is one YAML file, validated on load and hot-reloaded. An invalid edit is rejected and the old policy stays active. Nothing is hard-coded. Judges will edit the policy while the system runs.
@@ -13,7 +13,7 @@ Read this first. It applies to every human and every AI agent (Claude Code, GitH
 
 ## 2. How it works
 
-Summary only. If this section and [`docs/architecture.md`](docs/architecture.md) disagree, the architecture doc wins.
+Summary only. If this section and [`docs/architecture.md`](5-implementation/docs/architecture.md) disagree, the architecture doc wins.
 
 - **Integration:** the layer exposes an OpenAI-compatible `/v1/chat/completions`. An agent switches its `base_url` and sends a signed JWT as its bearer token, and is protected with no other code changes. The user and their roles come from the token, and the policy maps roles to tools (see architecture §11). An agent that ignores our verdict and runs a blocked tool anyway is not stopped by the layer.
 - **Checkpoints:** input → tool-call (proxy reply) → tool-result → output. The agent re-sends the whole conversation every step, so the layer sees every prompt, action, returned data and answer.
@@ -49,12 +49,16 @@ Summary only. If this section and [`docs/architecture.md`](docs/architecture.md)
 AGENTS.md            Rules for every agent (this file). CLAUDE.md = "@AGENTS.md".
 .specify/            spec-kit: memory/constitution.md (principles only, no tech),
                      templates/, scripts/, integration.json.
-docs/architecture.md The single description of stack, data model and design.
-contracts/           API shapes and schemas. The one source of truth for backend and frontend.
-specs/NNN-<name>/    One folder per feature: spec.md (what/why), plan.md (how), tasks.md.
-backend/             Backend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
-frontend/            Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
 .claude/, .github/   spec-kit commands for Claude Code and Copilot.
+1-solution/ … 4-testing/  Submission write-ups for the judges. They link into 5-implementation.
+5-implementation/    Everything that runs. Paths below are relative to it.
+  compose.yaml       Docker entry point; run `docker compose` from this folder.
+  docs/architecture.md The single description of stack, data model and design.
+  contracts/         API shapes and schemas. The one source of truth for backend and frontend.
+  specs/NNN-<name>/  One folder per feature: spec.md (what/why), plan.md (how), tasks.md.
+  backend/           Backend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+  frontend/          Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md).
+  test_app/, demo_data/  Demo agents and their synthetic data.
 ```
 
 - The root `AGENTS.md`/`CLAUDE.md` load automatically. The `backend/` and `frontend/` rule files load only when working in that folder.
@@ -65,9 +69,9 @@ frontend/            Frontend code + its own AGENTS.md and CLAUDE.md (@AGENTS.md
 
 | Zone | Paths | Owner |
 |------|-------|-------|
-| Contracts + design (shared) | `contracts/`, `docs/` | everyone, small announced PRs only |
-| Backend core | `backend/` | TBD |
-| Frontend / UI | `frontend/` | TBD |
+| Contracts + design (shared) | `5-implementation/contracts/`, `5-implementation/docs/` | everyone, small announced PRs only |
+| Backend core | `5-implementation/backend/` | TBD |
+| Frontend / UI | `5-implementation/frontend/` | TBD |
 | Demo agent + tests | TBD | TBD |
 
 Zones are a hint, not a lock. Before editing outside your zone, `git fetch` and check open branches/PRs on the same files. If someone else is changing them, tell your human. Agents coordinate only through git and humans. Keep cross-zone edits small, and never reformat files you do not own.
@@ -152,3 +156,9 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-03 — Judges run everything with root `compose.yaml` (`init`, `up`, `run test-app`); Ollama stays on the host and a socat relay keeps `localhost:11434` in `policy.yaml` valid inside Docker. `test_app` switches to proxy mode with `TEST_APP_PROXY_URL`; user roles `clerk`/`treasurer` map to callers `operator_clerk`/`operator_treasurer`. (Sviatoslav)
 - 2026-10-03 — `docker compose up` alone runs the stack: `JWT_SECRET` defaults to a public demo value in `compose.yaml` (override via `.env` or the shell; `init` writes a random one), and the frontend image mints the playground's JWT (`sub` playground, role `developer`, 30 days) from it at build time. Ollama stays on the host. `test_app` signs its own tokens (`analyst`; `operator_<role>` with role `clerk`/`treasurer`) and no longer calls the tool guard; the three old callers became RBAC roles with budgets. (Artem)
 - 2026-10-03 — The demo runs on OpenAI: `gpt-4o-mini` is the agents' model and Jev's fallback, keyed by `OPENAI_API_KEY` through the new `api_key_env` of `models.<name>` and `jev.fallback` (an empty key env fails closed). `gemma4` on Ollama stays in the policy for offline use; tests point the fallback at mocked Ollama and never call OpenAI. Supersedes "Jev unavailable → local Ollama fallback" and the "no paid APIs" line in §3 for the demo. (Artem)
+
+- 2026-10-04 — User authorizes a Terraform-managed public judge relay in Google Cloud project `hackyeah-2026-510606`, `europe-west1`, with Secret Manager keys uploaded outside Terraform state. Judges run the control layer locally without provider keys. Remote allowance: 700 lifetime provider calls, 60/minute, 32 KiB request bodies, 2,048 OpenAI output tokens, expiry 2026-10-05 23:59 Europe/Warsaw. `jev.api_key_env: null` explicitly permits keyless relay transport; direct-provider defaults stay authenticated. (Mihail)
+
+- 2026-10-04 — User increases the public judge relay allowance to 1,500 lifetime provider calls. Other limits and expiry remain unchanged. User authorizes removal of `key.txt` from file tracking and all Git history. (Mihail)
+
+- 2026-10-04 — User requests the submission_structure layout on feat/judge-api-relay: submission write-ups in folders 1–4; runtime code, Compose files, relay infrastructure and scripts in 5-implementation. Run deployment and Compose commands from that folder. (Mihail)
