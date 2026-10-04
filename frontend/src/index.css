@@ -495,3 +495,20 @@ button:focus-visible, a:focus-visible, .split-handle:focus-visible {
   margin-top: 4px;
   font-size: 11px;
 }
+
+.playground-page { display: flex; flex-direction: column; }
+.playground-page[hidden] { display: none; }
+.metric-help { margin: 0 0 10px; color: var(--fg-dim); font-size: 11px; line-height: 17px; }
+.latency-table { font-size: 11px; }
+.audit-execution .execution-heading th { padding: 10px 12px; border-top: 5px solid var(--bg); background: var(--bg-sel); text-align: left; }
+.audit-execution tr:not(.execution-heading) td:first-child { border-left: 2px solid var(--line); }
+.audit-cost { margin: 12px 0 16px; padding: 12px; border: 1px solid var(--accent-dim); background: var(--bg-sel); display: flex; flex-direction: column; gap: 4px; white-space: normal; }
+.audit-cost strong { color: var(--accent); font-size: 22px; line-height: 28px; }
+.rule-outcome, .risk-score { white-space: nowrap; }
+
+.overview-workspace { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+.overview-workspace > .row { flex: 0 0 auto !important; min-height: 230px; }
+.overview-workspace > .row:nth-child(2) { min-height: 230px; }
+.overview-workspace > .row:nth-child(3) { min-height: 580px; }
+.overview-workspace .latency-table td { white-space: nowrap; }
+.overview-workspace > .row:nth-child(3) > .col > .pane { flex: 0 0 auto; }

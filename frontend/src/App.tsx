@@ -54,7 +54,10 @@ export default function App() {
         {page === 'live' && <Live />}
         {page === 'audit' && <AuditLog range={range} />}
         {page === 'policy' && <PolicyEditor onSaved={health.reload} />}
-        {page === 'playground' && <Playground />}
+        {/* Keep conversation state and pending replies alive while another tab is open. */}
+        <div className="grow playground-page" hidden={page !== 'playground'}>
+          <Playground active={page === 'playground'} />
+        </div>
       </main>
 
       <footer className="statusline">

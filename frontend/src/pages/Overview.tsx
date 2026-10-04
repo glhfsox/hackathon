@@ -7,21 +7,6 @@ import { sinceIso, type TimeRange } from '../ranges'
 const POLL_MS = 5000
 const BINS = 12
 
-// OWASP LLM Top 10 (2023) items and the checks that address them. Coverage shown is what the
-// policy in force enables, nothing more.
-const OWASP: { id: string; label: string; checks: string[] }[] = [
-  { id: 'LLM01', label: 'Inj', checks: ['signatures', 'jev'] },
-  { id: 'LLM02', label: 'Out', checks: ['pii_secrets', 'jev'] },
-  { id: 'LLM03', label: 'Data', checks: [] },
-  { id: 'LLM04', label: 'DoS', checks: ['budget', 'loop_detection'] },
-  { id: 'LLM05', label: 'Sup', checks: [] },
-  { id: 'LLM06', label: 'Sens', checks: ['pii_secrets'] },
-  { id: 'LLM07', label: 'Plug', checks: ['tool_args'] },
-  { id: 'LLM08', label: 'Agcy', checks: ['permissions', 'loop_detection'] },
-  { id: 'LLM09', label: 'Rel', checks: [] },
-  { id: 'LLM10', label: 'Mdl', checks: [] },
-]
-
 const enforces = (m: Mode) => m === 'block' || m === 'redact'
 
 function checkModes(metrics: Metrics) {
@@ -31,11 +16,7 @@ function checkModes(metrics: Metrics) {
     total: ids.length,
     on: ids.filter((id) => modes(id).some((m) => m !== 'off')).length,
     enforcing: ids.filter((id) => modes(id).some(enforces)).length,
-    level(id: string): 'on' | 'monitor' | 'off' {
-      const ms = modes(id)
-      if (ms.some(enforces)) return 'on'
-      return ms.some((m) => m === 'monitor') ? 'monitor' : 'off'
-    },
+
   }
 }
 
@@ -75,7 +56,6 @@ export default function Overview({ range }: { range: TimeRange }) {
   const blocks = Object.entries(m.blocks_by_check).sort((a, b) => b[1] - a[1])
   const blockMax = Math.max(1, ...blocks.map(([, n]) => n))
   const latency = Object.entries(m.latency_ms_by_check).filter(([c]) => c !== 'turn_summary')
-  const latencyMax = Math.max(1, ...latency.map(([, p]) => p.p95))
   const threats = (feed.data?.items ?? [])
     .filter((r) => r.action !== 'allow' && r.checkpoint !== null && r.check !== 'turn_summary')
     .slice(0, 30)
@@ -89,7 +69,7 @@ export default function Overview({ range }: { range: TimeRange }) {
   const share = (n: number) => (t.requests ? n / t.requests : 0)
 
   return (
-    <>
+    <div className="overview-workspace">
       <div className="row" style={{ flex: 1 }}>
         <Pane title="Security posture" className="grow" contentClassName="posture">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '100%' }}>
@@ -109,7 +89,7 @@ export default function Overview({ range }: { range: TimeRange }) {
                 </div>
               )}
               <div className="dim">
-                overhead p50/p95 {m.overhead_ms.p50.toFixed(0)}/{m.overhead_ms.p95.toFixed(0)}ms
+                Security overhead: median {m.overhead_ms.p50.toFixed(1)} ms · 95th percentile {m.overhead_ms.p95.toFixed(1)} ms
               </div>
             </div>
           </div>
@@ -175,22 +155,7 @@ export default function Overview({ range }: { range: TimeRange }) {
             </tbody>
           </table>
         </Pane>
-        <Pane title="OWASP LLM Top 10" className="grow">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 16px' }}>
-            {OWASP.map((o) => {
-              const levels = o.checks.map(modes.level)
-              const mark = levels.includes('on') ? '✓' : levels.includes('monitor') ? '~' : ' '
-              return (
-                <div key={o.id} title={o.checks.join(', ') || 'not covered by any check'}>
-                  <span className={mark === '✓' ? 'bright' : mark === '~' ? 'accent' : 'dim'}>{mark === ' ' ? '–' : mark}</span>{' '}
-                  <span className={mark === ' ' ? 'dim' : ''}>
-                    {o.id}:{o.label}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </Pane>
+
       </div>
 
       <div className="row" style={{ flex: 1 }}>
@@ -210,63 +175,42 @@ export default function Overview({ range }: { range: TimeRange }) {
             </div>
           ))}
         </Pane>
-        <div className="col" style={{ width: 380 }}>
-          <Pane title="Latency · p50 / p95 (ms)" className="grow">
-            {(
-              [
-                ['checks before', m.request_latency_ms.pre_checks],
-                ['model', m.request_latency_ms.upstream],
-                ['checks after', m.request_latency_ms.post_checks],
-                ['TTFT (step)', m.request_latency_ms.ttft],
-              ] as const
-            ).map(([label, p]) => (
-              <div key={label} style={{ display: 'flex', gap: 8 }}>
-                <span className={label === 'TTFT (step)' ? 'bright bold' : 'dim'} style={{ width: 120 }}>
-                  {label}
-                </span>
-                <TextBar
-                  value={p.p95 / Math.max(1, m.request_latency_ms.total.p95)}
-                  width={10}
-                  className={label === 'model' ? 'dim' : 'accent'}
-                />
-                <span>
-                  {p.p50.toFixed(0)}/{p.p95.toFixed(0)}
-                </span>
-              </div>
-            ))}
-            <div className="dim" style={{ margin: '6px 0 2px' }}>
-              per check
-            </div>
-            {latency.map(([check, p]) => (
-              <div key={check} style={{ display: 'flex', gap: 8 }}>
-                <span className="dim" style={{ width: 120 }}>
-                  {check}
-                </span>
-                <TextBar value={p.p95 / latencyMax} width={10} className={check === 'jev' ? 'accent' : 'dim'} />
-                <span>
-                  {p.p50.toFixed(0)}/{p.p95.toFixed(0)}
-                </span>
-              </div>
-            ))}
+        <div className="col" style={{ width: '40%' }}>
+          <Pane title="Response time" className="grow">
+            <p className="metric-help">Elapsed time in milliseconds for the selected window. Median (p50): half finish within this time. 95th percentile (p95): 95% finish within this time.</p>
+            <table className="latency-table">
+              <thead><tr><th>Stage</th><th className="num">Median</th><th className="num">95th %</th></tr></thead>
+              <tbody>
+                {([
+                  ['Security before model', m.request_latency_ms.pre_checks],
+                  ['Model response', m.request_latency_ms.upstream],
+                  ['Security after model', m.request_latency_ms.post_checks],
+                  ['Total response', m.request_latency_ms.total],
+                ] as const).map(([label, p]) => (
+                  <tr key={label}><td className={label === 'Total response' ? 'bright bold' : ''}>{label}</td><td className="num">{p.p50.toFixed(1)} ms</td><td className="num">{p.p95.toFixed(1)} ms</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="dim" style={{ marginTop: 8 }}>Individual security checks</div>
+            <table className="latency-table">
+              <thead><tr><th>Check</th><th className="num">Median</th><th className="num">95th %</th></tr></thead>
+              <tbody>{latency.map(([check, p]) => (
+                <tr key={check}><td>{check}</td><td className="num">{p.p50.toFixed(1)} ms</td><td className="num">{p.p95.toFixed(1)} ms</td></tr>
+              ))}</tbody>
+            </table>
           </Pane>
-          <Pane title="Budget today" className="grow">
-            {Object.entries(m.budget_by_caller).map(([caller, b]) => {
-              const used = b.tokens_limit ? b.tokens_today / b.tokens_limit : 0
-              return (
-                <div key={caller} style={{ display: 'flex', gap: 8 }}>
-                  <span className="dim" style={{ width: 120 }}>
-                    {caller}
-                  </span>
-                  <TextBar value={used} width={10} className={used > 0.8 ? 'accent' : ''} />
-                  <span>
-                    {b.tokens_today}/{b.tokens_limit || '∞'}
-                  </span>
-                </div>
-              )
-            })}
+          <Pane title="Usage today" className="grow">
+            <p className="metric-help">Today's tokens and cost per user. Budget limits are unavailable in this report.</p>
+            {Object.keys(m.budget_by_caller).length === 0 && <div className="dim">No usage recorded today.</div>}
+            <table>
+              <thead><tr><th>User</th><th className="num">Tokens</th><th className="num">Cost</th></tr></thead>
+              <tbody>{Object.entries(m.budget_by_caller).map(([caller, b]) => (
+                <tr key={caller}><td>{caller}</td><td className="num">{b.tokens_today.toLocaleString()}</td><td className="num">${b.cost_today.toFixed(4)}</td></tr>
+              ))}</tbody>
+            </table>
           </Pane>
         </div>
       </div>
-    </>
+    </div>
   )
 }

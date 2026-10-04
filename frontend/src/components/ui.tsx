@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import type { Action } from '../api/types'
+import type { Action, DecidedBy } from '../api/types'
 
 export function Pane(props: {
   title: ReactNode
@@ -41,4 +41,15 @@ export function Status({ error, loading }: { error: string | null; loading: bool
   if (error) return <div className="error-text status">E {error}</div>
   if (loading) return <div className="dim status">loading…</div>
   return null
+}
+
+/** Rule outcomes are categorical; only AI judgments have a meaningful risk score. */
+export function CheckOutcome({ check, decided_by, action, score }: { check: string; decided_by: DecidedBy; action: Action; score: number }) {
+  if (check !== 'jev' && decided_by === 'rules') {
+    const labels = { allow: '✓ Passed', block: 'Blocked', redact: 'Redacted', flag: 'Flagged' }
+    return <span className={`rule-outcome ${action === 'allow' ? 'bright' : 'accent'}`}>{labels[action]}</span>
+  }
+  return <span className="risk-score" title="AI risk score: 0 is low risk, 1 is high risk">
+    {score.toFixed(2)} <TextBar value={score} width={5} className={score >= 0.7 ? 'accent' : 'bright'} />
+  </span>
 }
