@@ -197,7 +197,8 @@ class JevFallback(_Strict):
 
 class JevConfig(_Strict):
     model: str = "jev-1.13.0"
-    api_key_env: str = "TYPESAFE_API_KEY"
+    # Explicit None enables a keyless relay; omission keeps direct-provider authentication.
+    api_key_env: str | None = "TYPESAFE_API_KEY"
     base_url: str = "https://api.typesafe.ai"
     timeout_s: float = 3.0
     fallback: JevFallback

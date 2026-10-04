@@ -6,7 +6,16 @@ Design: [docs/architecture.md](docs/architecture.md). API: [contracts/](contract
 
 ## Quick start for judges
 
-You need Docker and an OpenAI API key: the agents' model (`gpt-4o-mini`) and Jev's fallback run at OpenAI.
+With the published judge relay, you need Docker and internet access; no OpenAI or TypeSafe keys:
+
+```sh
+docker compose -f compose.yaml -f compose.judges.yaml up -d --build
+docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app --scenario all
+```
+
+The relay is available through October 5, 2026 at 23:59 Europe/Warsaw, with a shared 700-call allowance. The control layer, dashboard and editable policy run locally. [Relay provisioning and limits](docs/judge-relay.md).
+
+For direct-provider access with your own keys:
 
 ```sh
 cp .env.example .env                    # once; put OPENAI_API_KEY (and TYPESAFE_API_KEY) there
@@ -26,10 +35,10 @@ Open the dashboard at <http://localhost:5173>. It shows the security posture, bl
 `test_app` is a two-agent treasury application: the **Analyst** reads payments and documents, and the **Operator** acts on the Analyst's answer. In Docker, both agents run through the control layer, each with its own JWT signed with `JWT_SECRET`. Every tool call in a model reply is checked by the layer before the agent sees it, so a blocked tool is never executed.
 
 ```sh
-docker compose run --rm test-app --list                 # the scenarios
-docker compose run --rm test-app --scenario all         # run all of them, then print a summary
-docker compose run --rm test-app --scenario delete_sql
-docker compose run --rm test-app "Why is TXN-000001 held?" --role clerk
+docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app --list
+docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app --scenario all
+docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app --scenario delete_sql
+docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app "Why is TXN-000001 held?" --role clerk
 ```
 
 The user who sends the request has a role. `clerk` may hold payments, send emails and export reports. `treasurer` may also release payments and run SQL. Each scenario picks the role that lets its risky action reach the Operator; `--role` overrides it.

@@ -283,8 +283,8 @@ class JevClient:
 
     async def _judge(self, inp: JudgeInput, cfg: JevConfig) -> JudgeVerdict:
         errors: list[str] = []
-        key = os.environ.get(cfg.api_key_env, "")
-        if not key:
+        key = os.environ.get(cfg.api_key_env, "") if cfg.api_key_env is not None else None
+        if cfg.api_key_env is not None and not key:
             errors.append(f"jev: skipped, env {cfg.api_key_env} is empty")
             log.info("jev skipped: env %s is empty, using fallback", cfg.api_key_env)
         elif self._jev_skipped():
@@ -318,14 +318,14 @@ class JevClient:
             )
         raise JudgeUnavailable("; ".join(errors))
 
-    async def _ask_jev(self, inp: JudgeInput, key: str, cfg: JevConfig) -> JudgeVerdict:
+    async def _ask_jev(self, inp: JudgeInput, key: str | None, cfg: JevConfig) -> JudgeVerdict:
         body = {
             "model": cfg.model,
             "state": {"checkpoint": inp.checkpoint.value, "text": inp.text, "context": inp.context},
             "questions": {"risky": _RISKY_QUESTION, "category": _CATEGORY_QUESTION},
         }
         url = f"{cfg.base_url.rstrip('/')}/v1/systemone"
-        headers = {"Authorization": f"Bearer {key}"}
+        headers = {"Authorization": f"Bearer {key}"} if key is not None else {}
         resp = await self._http.post(url, json=body, headers=headers, timeout=cfg.timeout_s)
         if resp.status_code in _RETRY_STATUS:
             log.warning("jev returned %s, retrying once", resp.status_code)
@@ -394,7 +394,9 @@ class JevClient:
 
     async def health(self) -> dict[str, str]:
         cfg = self._get_cfg()
-        jev_up = bool(os.environ.get(cfg.api_key_env)) and not self._jev_failed
+        jev_up = (
+            cfg.api_key_env is None or bool(os.environ.get(cfg.api_key_env))
+        ) and not self._jev_failed
         fb = cfg.fallback
         try:
             resp = await self._http.get(

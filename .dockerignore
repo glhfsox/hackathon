@@ -12,3 +12,7 @@ backend/logs
 frontend/dist
 test_app/runs
 demo_data/generated
+infra/judge-relay/.terraform
+infra/judge-relay/*.tfstate*
+infra/judge-relay/*.tfvars*
+infra/judge-relay/source.zip

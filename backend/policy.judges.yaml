@@ -1,0 +1,136 @@
+version: '0.2'
+jev_threshold: 0.6
+models:
+  gpt-4o-mini:
+    upstream_base_url: https://judge-api-relay-hoa3z3uclq-ew.a.run.app/openai/v1
+    api_key_env: null
+    price_per_1k_tokens: 0.0006
+    timeout_s: 60
+  gemma4:
+    upstream_base_url: http://localhost:11434/v1
+    price_per_1k_tokens: 0.0
+    timeout_s: 120
+permissions:
+  customers.read:
+  - query_customers
+  files.read:
+  - read_file
+  web.read:
+  - http_get
+  shell.exec:
+  - run_shell
+  tasks.delegate:
+  - delegate
+  docs.read:
+  - search_documents
+  transactions.read:
+  - query_transactions
+  payments.hold:
+  - hold_payment
+  payments.release:
+  - release_payment
+  email.send:
+  - send_email
+  reports.export:
+  - export_report
+  sql.run:
+  - run_sql
+roles:
+  support:
+  - customers.read
+  developer:
+  - customers.read
+  - files.read
+  - web.read
+  - shell.exec
+  orchestrator:
+  - tasks.delegate
+  analyst:
+  - docs.read
+  - transactions.read
+  clerk:
+  - payments.hold
+  - email.send
+  - reports.export
+  treasurer:
+  - payments.hold
+  - payments.release
+  - email.send
+  - reports.export
+  - sql.run
+checks:
+  permissions:
+    allowed_models:
+    - gpt-4o-mini
+    - gemma4
+  budget:
+    roles:
+      developer:
+        requests_per_minute: 60
+        tokens_per_day: 200000
+        cost_per_day: 1.0
+      orchestrator:
+        requests_per_minute: 30
+        tokens_per_day: 100000
+        cost_per_day: 0.5
+      support:
+        requests_per_minute: 30
+        tokens_per_day: 50000
+        cost_per_day: 0.5
+      analyst:
+        requests_per_minute: 30
+        tokens_per_day: 100000
+        cost_per_day: 0.5
+      clerk:
+        requests_per_minute: 20
+        tokens_per_day: 50000
+        cost_per_day: 0.25
+      treasurer:
+        requests_per_minute: 20
+        tokens_per_day: 50000
+        cost_per_day: 0.25
+  loop_detection:
+    max_tool_calls: 10
+    max_repeats: 3
+  signatures:
+    skip_roles:
+    - system
+  tool_args:
+    allowed_root: /workspace
+    categories:
+    - shell
+    - sql
+    - path_traversal
+    - deserialization
+    max_command_chars: 2000
+  pii_secrets:
+    types:
+    - email
+    - phone
+    - ssn
+    - pesel
+    - iban
+    - card
+    - api_key
+    skip_roles:
+    - system
+  jev:
+    timeout_s: 115
+    max_chars: 4000
+    max_judge_calls: 128
+    max_concurrency: 8
+    skip_roles:
+    - system
+signatures:
+  source: signatures.yaml
+  refresh_s: 5
+jev:
+  model: jev-1.13.0
+  api_key_env: null
+  base_url: https://judge-api-relay-hoa3z3uclq-ew.a.run.app/typesafe
+  timeout_s: 55
+  fallback:
+    model: gpt-4o-mini
+    base_url: https://judge-api-relay-hoa3z3uclq-ew.a.run.app/openai/v1
+    api_key_env: null
+    timeout_s: 55

@@ -159,6 +159,26 @@ async def test_missing_key_goes_straight_to_fallback(no_key, http, mock):
     assert verdict.score == 0.7 and verdict.categories == ["prompt_injection"]
 
 
+async def test_explicit_keyless_relay_attempts_jev_without_authorization(no_key, http, mock):
+    jev = mock.post(JEV_URL).mock(return_value=_jev_ok(0.05, "benign"))
+    fb = mock.post(FB_URL)
+
+    verdict = await JevClient(_cfg({"api_key_env": None}), http).judge(_inp())
+
+    assert verdict.decided_by == "jev"
+    assert "authorization" not in jev.calls.last.request.headers
+    assert not fb.called
+
+
+async def test_keyless_relay_failure_preserves_fallback(no_key, http, mock):
+    mock.post(JEV_URL).mock(return_value=httpx.Response(503))
+    mock.post(FB_URL).mock(return_value=_fb_ok())
+
+    verdict = await JevClient(_cfg({"api_key_env": None}), http).judge(_inp())
+
+    assert verdict.decided_by == "fallback"
+
+
 @pytest.mark.parametrize(
     "jev_reply",
     [
