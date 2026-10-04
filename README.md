@@ -13,7 +13,7 @@ docker compose -f compose.yaml -f compose.judges.yaml up -d --build
 docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app --scenario all
 ```
 
-The relay is available through October 5, 2026 at 23:59 Europe/Warsaw, with a shared 700-call allowance. The control layer, dashboard and editable policy run locally. [Relay provisioning and limits](docs/judge-relay.md).
+The relay is available through October 5, 2026 at 23:59 Europe/Warsaw, with a shared 1500-call allowance. The control layer, dashboard and editable policy run locally. [Relay provisioning and limits](docs/judge-relay.md).
 
 For direct-provider access with your own keys:
 

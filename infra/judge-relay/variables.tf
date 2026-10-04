@@ -28,7 +28,7 @@ variable "expires_at" {
 }
 variable "total_calls" {
   type    = number
-  default = 700
+  default = 1500
   validation {
     condition     = var.total_calls > 0 && floor(var.total_calls) == var.total_calls
     error_message = "total_calls must be a positive integer."

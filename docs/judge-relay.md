@@ -10,7 +10,7 @@ Install Terraform, Google Cloud CLI, and Python 3.12. Sign in with an identity a
 gcloud auth login --update-adc
 python3 -m pip install pyyaml
 python3 scripts/deploy_judge_relay.py --project hackyeah-2026-510606 \
-  --region europe-west1 --env-file .env --total-calls 700 \
+  --region europe-west1 --env-file .env --total-calls 1500 \
   --expires-at 2026-10-05T21:59:00Z --enable
 ```
 
@@ -39,7 +39,7 @@ python3 scripts/configure_judge_relay.py https://YOUR-RELAY-URL
 
 ## Public access limits
 
-This endpoint does not distinguish judges from other users. Its remote limits are independent of the editable local policy: 700 lifetime provider calls, 60 calls per minute across all instances, 32 KiB bodies, one OpenAI completion with at most 2,048 output tokens, and expiry October 5, 2026 at 23:59 Europe/Warsaw. Provisioning smoke/demo calls consume that allowance too.
+This endpoint does not distinguish judges from other users. Its remote limits are independent of the editable local policy: 1500 lifetime provider calls, 60 calls per minute across all instances, 32 KiB bodies, one OpenAI completion with at most 2,048 output tokens, and expiry October 5, 2026 at 23:59 Europe/Warsaw. Provisioning smoke/demo calls consume that allowance too.
 
 A Firestore transaction reserves capacity before each provider call. Failures retain reservations because upstream usage may already have occurred. A storage failure refuses forwarding; instance restarts and overlapping deployments preserve the counters. Unsupported models/routes, oversized bodies, streaming, and client-provided upstream URLs are refused.
 

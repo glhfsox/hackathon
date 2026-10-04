@@ -8,3 +8,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+
+# Local credential scratch files must never be tracked.
+key.txt

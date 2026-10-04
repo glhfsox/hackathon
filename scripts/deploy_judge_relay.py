@@ -67,7 +67,7 @@ def main() -> None:
     parser.add_argument("--project", default="hackyeah-2026-510606")
     parser.add_argument("--region", default="europe-west1")
     parser.add_argument("--env-file", type=Path, default=root / ".env")
-    parser.add_argument("--total-calls", type=int, default=700)
+    parser.add_argument("--total-calls", type=int, default=1500)
     parser.add_argument("--expires-at", default="2026-10-05T21:59:00Z")
     parser.add_argument("--enable", action="store_true")
     args = parser.parse_args()
