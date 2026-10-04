@@ -36,7 +36,7 @@ variable "total_calls" {
 }
 variable "calls_per_minute" {
   type    = number
-  default = 60
+  default = 200
 }
 variable "max_body_bytes" {
   type    = number

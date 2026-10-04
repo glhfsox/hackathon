@@ -41,7 +41,7 @@ python3 scripts/configure_judge_relay.py https://YOUR-RELAY-URL
 
 ## Public access limits
 
-This endpoint does not distinguish judges from other users. Its remote limits are independent of the editable local policy: 1500 lifetime provider calls, 60 calls per minute across all instances, 32 KiB bodies, one OpenAI completion with at most 2,048 output tokens, and expiry October 5, 2026 at 23:59 Europe/Warsaw. Provisioning smoke/demo calls consume that allowance too.
+This endpoint does not distinguish judges from other users. Its remote limits are independent of the editable local policy: 1500 lifetime provider calls, 200 calls per minute across all instances, 32 KiB bodies, one OpenAI completion with at most 2,048 output tokens, and expiry October 5, 2026 at 23:59 Europe/Warsaw. Provisioning smoke/demo calls consume that allowance too.
 
 A Firestore transaction reserves capacity before each provider call. Failures retain reservations because upstream usage may already have occurred. A storage failure refuses forwarding; instance restarts and overlapping deployments preserve the counters. Unsupported models/routes, oversized bodies, streaming, and client-provided upstream URLs are refused.
 

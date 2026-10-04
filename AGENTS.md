@@ -162,3 +162,5 @@ Append-only, newest at the bottom: `YYYY-MM-DD — decision or question (who)`. 
 - 2026-10-04 — User increases the public judge relay allowance to 1,500 lifetime provider calls. Other limits and expiry remain unchanged. User authorizes removal of `key.txt` from file tracking and all Git history. (Mihail)
 
 - 2026-10-04 — User requests the submission_structure layout on feat/judge-api-relay: submission write-ups in folders 1–4; runtime code, Compose files, relay infrastructure and scripts in 5-implementation. Run deployment and Compose commands from that folder. (Mihail)
+
+- 2026-10-04 — User requests a direct main update raising the public judge relay rate limit to 200 provider calls per minute. The 1,500-call lifetime allowance and expiry remain unchanged. (Mihail)
