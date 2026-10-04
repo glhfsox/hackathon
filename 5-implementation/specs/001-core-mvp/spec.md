@@ -6,7 +6,7 @@
 
 **Input**: User description: "Base specification of the AI Control Layer (see AGENTS.md §1-2, docs/architecture.md, contracts/)."
 
-This spec states **what** must be implemented and **why**. Design lives in [`docs/architecture.md`](../../docs/architecture.md), data shapes and endpoints in [`contracts/`](../../contracts/README.md), principles in the [constitution](../../.specify/memory/constitution.md). They are referenced here, not copied.
+This spec states **what** must be implemented and **why**. Design lives in [`docs/architecture.md`](../../docs/architecture.md), data shapes and endpoints in [`contracts/`](../../contracts/README.md), principles in the [constitution](../../../.specify/memory/constitution.md). They are referenced here, not copied.
 
 **Actors**
 

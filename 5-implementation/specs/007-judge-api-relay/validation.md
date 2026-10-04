@@ -41,3 +41,12 @@ GitHub CLI installation and direct GitHub credential access were declined. A rea
 On 2026-10-04, the user increased the lifetime allowance to 1,500. Terraform apply changed only the function configuration, and the deployed `RELAY_SETTINGS` confirms 1,500; all other limits and expiry remain unchanged. The deployment-helper tests passed (6 tests). The initial 700-call validation figures above remain historical results.
 
 `key.txt` was removed from all reachable local and published Git history. Only `dev` and `submission_structure` needed rewriting; all unrelated refs retained their IDs. A fresh remote mirror confirms no `key.txt` paths in any fetched history. Local reflogs and obsolete objects were pruned. Existing clones and GitHub cached views are outside this cleanup; exposed credentials should be rotated.
+
+## Submission layout verification — 2026-10-04
+
+- Adopted the submission_structure folder layout and write-ups at bd6b484, preserving relay code and private local Terraform state. Runtime commands now run from `5-implementation/`.
+- Relay and treasury tests: **42 passed**. Backend lint and formatting: **passed**, 120 files.
+- Full backend suite: **1,344 passed, 3 skipped, 1 failed**. The existing `tee x ` timing test took 3.045 seconds against its 3-second limit, matching the previously recorded failure; no check implementation changed.
+- Terraform validation and formatting, judge Compose configuration: **passed**.
+- Frontend `npm run lint` and `npm run build`: **passed** inside the relocated Docker stack.
+- All three Docker images built and the isolated stack became healthy. Live `path_traversal` scenario: **exit 0**, forbidden export blocked by `tool_args`, zero operator actions.

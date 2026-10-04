@@ -2,6 +2,8 @@
 
 Judges run the control layer, policy editor, dashboard and treasury agents locally. Only provider transport runs in Google Cloud. The public relay adds private credentials and forwards to fixed OpenAI/TypeSafe endpoints. Provider keys never enter the checkout, responses, or Terraform variables/state. Transport and configuration are defined in [contracts/relay.md](../contracts/relay.md).
 
+Run the commands in this guide from `5-implementation/`.
+
 ## Provision without console setup
 
 Install Terraform, Google Cloud CLI, and Python 3.12. Sign in with an identity allowed to enable APIs, create service accounts and IAM grants, create storage/Firestore/secrets, and deploy Cloud Functions. Billing must be enabled on the existing project.
