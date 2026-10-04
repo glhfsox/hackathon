@@ -108,6 +108,10 @@ docker compose -f compose.yaml -f compose.judges.yaml run --rm test-app "Why is 
 
 A `clerk` may hold payments, send emails and export reports. A `treasurer` may also release payments and run SQL. Each scenario uses the role that lets its risky action reach the Operator, and `--role` overrides it. Models vary between runs, so a scenario does not always reach its risky step. The console prints every non-allow decision as `[control] <agent> <checkpoint> <check> <action>: <reason>`. The Operator's actions are mocks that are only logged to `test_app/runs/`.
 
+### Interactive test in the Playground
+
+For an interactive test, open the dashboard at http://localhost:5173 and select **Playground**. Send your own prompts or use the attack presets to see which requests are allowed, redacted or blocked, which checks fired, and why.
+
 ## Change the policy while it runs
 
 All behaviour comes from [5-implementation/backend/policy.judges.yaml](5-implementation/backend/policy.judges.yaml). Edit it in the dashboard's **Policy** tab or in the file. A valid change is in force within about 2 seconds, and an invalid one is rejected while the old policy stays active. Some things to try:
@@ -136,17 +140,5 @@ Without Docker:
 - Backend: [backend/README.md](5-implementation/backend/README.md)
 - Test application, direct or through the proxy: [5-implementation/test_app/README.md](5-implementation/test_app/README.md)
 - Connecting your own agent: [5-implementation/docs/toolDescription.md](5-implementation/docs/toolDescription.md)
-
-## Screenshots
-
-[`5-implementation/frontend/tests/screenshots.spec.ts`](5-implementation/frontend/tests/screenshots.spec.ts) writes the images in `3-reporting/screenshots/`. Run it from `5-implementation/frontend/`:
-
-```sh
-npm ci
-SCREENSHOTS=1 VITE_PLAYGROUND_API_KEY=demo VITE_PLAYGROUND_MODEL=gpt-4o-mini npx playwright test screenshots  # sample data
-SCREENSHOTS=live npx playwright test screenshots                                                            # the running stack
-```
-
-Playwright uses Chrome by default. Set `PLAYWRIGHT_BROWSER=msedge` to use Edge instead.
 
 Team rules: [AGENTS.md](AGENTS.md).
