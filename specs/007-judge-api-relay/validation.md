@@ -35,3 +35,9 @@ Existing local stack left running; isolated smoke stack uses ports 18000/15173.
 ## Tooling limitation
 
 GitHub CLI installation and direct GitHub credential access were declined. A ready PR description is provided alongside the branch for manual PR creation if no authorized PR tool is available.
+
+## Follow-up: allowance and history cleanup
+
+On 2026-10-04, the user increased the lifetime allowance to 1,500. Terraform apply changed only the function configuration, and the deployed `RELAY_SETTINGS` confirms 1,500; all other limits and expiry remain unchanged. The deployment-helper tests passed (6 tests). The initial 700-call validation figures above remain historical results.
+
+`key.txt` was removed from all reachable local and published Git history. Only `dev` and `submission_structure` needed rewriting; all unrelated refs retained their IDs. A fresh remote mirror confirms no `key.txt` paths in any fetched history. Local reflogs and obsolete objects were pruned. Existing clones and GitHub cached views are outside this cleanup; exposed credentials should be rotated.
